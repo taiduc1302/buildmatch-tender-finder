@@ -135,3 +135,8 @@ ZIP archives are ignored.
 
 Live fetching, scoring changes, BuildMatch/Neon integration, Git remotes, and
 publishing are outside the scope of this snapshot preparation.
+
+comand in termainal:  
+git add .
+   git commit -m "Fix fixture leak in Outreach_Tracker + dashboard count mismatch"
+   git push
