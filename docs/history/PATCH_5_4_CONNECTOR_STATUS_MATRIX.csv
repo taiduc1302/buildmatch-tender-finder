@@ -1,0 +1,18 @@
+﻿source_id,source_name,live_proof_status,connector_status,records_pulled,records_normalized,clean_future_projects,watchlist,bulk_intake,rejected_context,manual_or_p3,failed_extraction,duplicates_skipped,route,status,next_action
+surrey_devapps,City of Surrey - Development Applications,manual_or_p3_stub,needs_exact_url,0,0,0,0,0,0,1,0,0,Run_Queue,needs_exact_url,verify/update endpoint manually; no silent fallback allowed
+surrey_futureworks,City of Surrey - FutureWorks capital/servicing,manual_or_p3_stub,access_test_required,0,0,0,0,0,0,1,0,0,Run_Queue,access_test_required,run access test (e.g. TENDER_FINDER office network)
+twp_langley_devactivity,Township of Langley - Development Activity Status Table,live_working,loaded,780,458,458,0,0,0,0,0,322,Future_Projects,loaded,review in Future_Projects; run PROMPT_DEV_APP_SCORING
+maple_ridge_devapps,Maple Ridge - Development Applications,live_working,loaded,909,582,582,0,0,0,0,0,327,Future_Projects,loaded,review in Future_Projects; run PROMPT_DEV_APP_SCORING
+city_langley_devapps,City of Langley - Development Applications,manual_or_p3_stub,p3_extract_required,0,0,0,0,0,0,1,0,0,Run_Queue,p3_extract_required,run P3 extractor (PROMPT_WEB_PDF_EXTRACT)
+van_building_permits,Vancouver - Issued Building Permits,live_working,loaded,20000,16860,3107,992,5832,6929,0,0,3140,Future_Projects,loaded,review in Future_Projects; run PROMPT_DEV_APP_SCORING
+van_rezoning,Vancouver - Rezoning Applications,manual_or_p3_stub,needs_exact_url,0,0,0,0,0,0,1,0,0,Run_Queue,needs_exact_url,verify/update endpoint manually; no silent fallback allowed
+van_devpermits,Vancouver - Development Permit Applications,manual_or_p3_stub,needs_exact_url,0,0,0,0,0,0,1,0,0,Run_Queue,needs_exact_url,verify/update endpoint manually; no silent fallback allowed
+van_city_projects,Vancouver - City Projects (site),live_context_or_rejected,context_only,936,0,0,0,0,1,0,0,0,Rejected_Archive,context_only,keep as context/trailing only
+abbotsford_devapps,Abbotsford - Development Application Areas,manual_or_p3_stub,p3_extract_required,0,0,0,0,0,0,1,0,0,Run_Queue,p3_extract_required,run P3 extractor (PROMPT_WEB_PDF_EXTRACT)
+new_west_currentdev,New Westminster - Current Developments,live_context_or_rejected,trailing_permit,1346,0,0,0,0,1,0,0,0,Rejected_Archive,trailing_permit,keep as context/trailing only
+burnaby_devapps,Burnaby - Development / Rezoning,manual_or_p3_stub,p3_extract_required,0,0,0,0,0,0,1,0,0,Run_Queue,p3_extract_required,run P3 extractor (PROMPT_WEB_PDF_EXTRACT)
+coquitlam_devapps,Coquitlam - Development Applications,live_working,loaded,471,452,452,0,0,0,0,0,19,Future_Projects,loaded,review in Future_Projects; run PROMPT_DEV_APP_SCORING
+delta_devapps,Delta - Development Applications,live_context_or_rejected,trailing_permit,2024,0,0,0,0,1,0,0,0,Rejected_Archive,trailing_permit,keep as context/trailing only
+dnv_devapps,District of North Vancouver - GEOweb (dev/infra),wrong_layer_disabled,disabled_wrong_layer,0,0,0,0,0,1,0,0,0,Rejected_Archive,disabled_wrong_layer,re-pin to correct dev-app layer
+port_coquitlam_landdev,Port Coquitlam - Lands and Development,wrong_layer_disabled,disabled_wrong_layer,0,0,0,0,0,1,0,0,0,Rejected_Archive,disabled_wrong_layer,re-pin to correct dev-app layer
+surrey_planning_reports,City of Surrey - Planning Reports / In-Process PDFs,live_working,loaded,794,794,794,0,0,0,0,0,0,Future_Projects,loaded,review in Future_Projects; verify app details at surrey.ca

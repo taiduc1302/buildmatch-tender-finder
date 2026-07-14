@@ -1,0 +1,214 @@
+# Regression Test Expectations for TENDER_FINDER Patch 5.0
+# ================================================
+# These are known-good baseline results from previous runs.
+# Patch 5.0 must maintain or improve these fixtures.
+
+regression_fixtures:
+
+  surrey_planning_reports:
+    description: "Surrey Planning Reports / In-Process PDF extraction"
+    status: "NEW CONNECTOR - MUST BE CREATED"
+    sources:
+      - "https://www.surrey.ca/sites/default/files/media/documents/RezoningInProcess-Result.pdf"
+      - "https://www.surrey.ca/sites/default/files/media/documents/DP-IN-PROCESS.pdf"
+      - "https://www.surrey.ca/city-government/council-meetings/planning-reports"
+    expected_min_rows: 10
+    expected_min_future_projects: 5
+    sample_record_ids:
+      - "SURREY-25-0366"
+      - "SURREY-25-0268"
+      - "SURREY-26-0004"
+      - "SURREY-25-0400"
+      - "SURREY-7926-0157-00"
+      - "SURREY-25-0376"
+      - "SURREY-25-0386"
+      - "SURREY-25-0161"
+      - "SURREY-25-0292"
+      - "SURREY-24-0345"
+    required_fields:
+      - "project_id"
+      - "address"
+      - "app_type_stage"
+      - "owner_applicant"
+      - "scope_summary"
+      - "fit_score"
+      - "fit_reason"
+      - "source_url"
+      - "evidence_url"
+    test_command: "python tenderfinder_raw_sweep.py --only surrey_planning_reports --review-only --out {output_path}/surrey_review.xlsx"
+    acceptance_criteria:
+      - "Non-empty output"
+      - "At least 5 Future_Projects rows"
+      - "At least 3 sample record IDs present"
+      - "No silent fallback to manual"
+
+  township_of_langley_devactivity:
+    description: "Township of Langley Development Activity Status Table (PROTECTED)"
+    status: "CONFIRMED WORKING - MUST NOT REGRESS"
+    connector_id: "twp_langley_devactivity"
+    fetch_type: "arcgis_hub_item"
+    endpoint: "aea97e65c9db4dad8242783c96e6b70c"
+    layer_index: 1
+    expected_baseline_rows: 700  # Previous run: 780, allow variance
+    expected_min_future_projects: 600
+    sample_record_ids:
+      - "TWP-LANGLEY-RZ100710"
+      - "TWP-LANGLEY-SA101389"
+      - "TWP-LANGLEY-DP101299"
+      - "TWP-LANGLEY-RZ100571"
+      - "TWP-LANGLEY-DP101347"
+      - "TWP-LANGLEY-RZ100729"
+      - "TWP-LANGLEY-RZ100787"
+      - "TWP-LANGLEY-DP101515"
+      - "TWP-LANGLEY-RO100158"  # Known dedupe candidate
+    dedupe_test:
+      expected_duplicates: 0  # After dedupe
+      check_field: "app_no"
+    test_command: "python tenderfinder_raw_sweep.py --only twp_langley_devactivity --review-only --out {output_path}/tol_review.xlsx"
+    acceptance_criteria:
+      - "Non-empty output"
+      - "At least 600 Future_Projects rows"
+      - "At least 5 sample record IDs present"
+      - "No e-connect URLs lost"
+      - "Dedupe prevents duplicate app_no"
+
+  maple_ridge_devapps:
+    description: "Maple Ridge Active Development Applications (BATCHING FIX REQUIRED)"
+    status: "CONFIRMED WORKING ON SMALL RUN - 504 ON FULL RUN"
+    connector_id: "maple_ridge_devapps"
+    fetch_type: "arcgis_hub_item"
+    endpoint: "c92b571eb6064a059781573466a7b38c"
+    layer_index: 2
+    expected_baseline_rows: 850  # Previous small run: 879, allow variance
+    expected_min_future_projects: 700
+    sample_record_ids:
+      - "MAPLE-RIDGE-2023-019-RZ"
+      - "MAPLE-RIDGE-2026-016-SD"
+    batching_requirements:
+      - "Max result count: 250 per batch"
+      - "Retry on 504 with exponential backoff"
+      - "Partial output acceptable with warning"
+      - "No unrecovered 504 timeout"
+    test_commands:
+      small_run: "python tenderfinder_raw_sweep.py --only maple_ridge_devapps --max-records 500 --review-only --out {output_path}/maple_ridge_500.xlsx"
+      full_run: "python tenderfinder_raw_sweep.py --only maple_ridge_devapps --review-only --out {output_path}/maple_ridge_full.xlsx"
+    acceptance_criteria:
+      - "Small run: non-empty output"
+      - "Full run: no unrecovered 504 error"
+      - "Full run: at least 500 rows if successful"
+      - "At least 1 sample record ID present"
+
+  preflight_link_checker:
+    description: "Link health check with no-search baseline"
+    status: "CONFIRMED - MUST KEEP OR IMPROVE"
+    test_command: "python tenderfinder_link_preflight.py --no-search --from-master {master_xlsx} --out {output_path}/v7_1_live"
+    expected_baseline:
+      source_rows: 159
+      urls_checked: 159
+      ok: 41
+      redirected: 19
+      connector: 17
+      manual_login: 42
+      broken: 35
+    acceptance_criteria:
+      - "All output files created (CSV + XLSX + logs)"
+      - "Long path writer test passes"
+      - "Row counts within ±20% of baseline"
+
+  preflight_tavily_search:
+    description: "Link replacement search with Tavily (if key available)"
+    status: "CONFIRMED - OPTIONAL"
+    test_command: "python tenderfinder_link_preflight.py --tavily-search --from-master {master_xlsx} --out {output_path}/v7_1_tavily"
+    expected_baseline:
+      source_rows: 159
+      urls_checked: 159
+      replacement_high: 12
+      replacement_low: 2
+      no_replacement_found: 7
+      critical_broken: 19
+    acceptance_criteria:
+      - "All output files created"
+      - "Replacement candidates CSV contains no API keys"
+      - "Row counts within ±20% of baseline"
+
+output_files_required:
+  "TENDER_FINDER_Source_Register_URL_Live_Audit.csv":
+    description: "Link audit with status"
+    required_columns:
+      - "source_name"
+      - "source_url"
+      - "http_status"
+      - "status_category"
+      - "redirects"
+  "TENDER_FINDER_Source_Register_URL_Live_Audit.xlsx":
+    description: "Same as CSV, Excel format for readability"
+  "TENDER_FINDER_Source_Register_Fix_Queue.csv":
+    description: "Sources flagged for review/fixing"
+  "TENDER_FINDER_Run_Source_Summary.csv":
+    description: "Source-level stats, not just totals"
+    required_columns:
+      - "connector_name"
+      - "source_id"
+      - "records_pulled"
+      - "records_normalized"
+      - "future_projects_rows"
+      - "rejected_rows"
+      - "duplicates_skipped"
+  "TENDER_FINDER_Connector_Coverage_Map.csv":
+    description: "159 sources × 16 connectors matrix"
+    required_columns:
+      - "source_name"
+      - "has_coded_connector"
+      - "connector_name"
+      - "connector_status"
+  "TENDER_FINDER_Link_Check_Run_Log.txt":
+    description: "Summary log with timestamps and counts"
+  "TENDER_FINDER_Link_Check_Debug_Log.txt":
+    description: "Detailed debug log for troubleshooting"
+
+test_phases:
+
+  phase_1_unit_tests:
+    description: "Individual connector probes"
+    test_list:
+      - "surrey_planning_reports (new fixture)"
+      - "twp_langley_devactivity (protection)"
+      - "maple_ridge_devapps (batching fix)"
+      - "van_building_permits (fit filtering)"
+
+  phase_2_integration_tests:
+    description: "Full sweep with all connectors"
+    test_list:
+      - "All connectors probe (--probe)"
+      - "All connectors review-only (--review-only)"
+      - "Source-level summary generation"
+      - "Dedupe validation"
+
+  phase_3_writer_tests:
+    description: "Output file creation and long-path handling"
+    test_list:
+      - "Preflight to short path (C:\\tenderfinder_out)"
+      - "Preflight to long OneDrive-like path"
+      - "Master write-test (--write-master to test copy)"
+      - "Backup verification"
+
+  phase_4_safety_tests:
+    description: "Protection and security checks"
+    test_list:
+      - "Protected v6 workbook never modified"
+      - "No .env.tenderfinder.local in final package"
+      - "No real API keys in output"
+      - "Review-only does not touch master"
+      - "Write-master requires explicit flag"
+
+security_checks:
+  required:
+    - "No .env.tenderfinder.local file in final zip"
+    - "No Tavily API key visible in code/output"
+    - "No hardcoded credentials"
+    - "Protected v6 workbook checksum unchanged"
+  verification_commands:
+    - "grep -r 'tvly' patch5_final.zip"
+    - "grep -r '\\.env' patch5_final.zip"
+    - "grep -r 'api_key\\|apikey\\|API_KEY' patch5_final.zip"
+    - "md5sum TENDER_FINDER_Tender_Intelligence_Working_Master_v6.xlsx | grep {original_checksum}"

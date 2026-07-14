@@ -1,0 +1,36 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+user_data/
+demo_history/
+*.eml
+*.db
+*.sqlite
+*.sqlite3
+*.zip
+.env
+.env.*
+*.log
+*.tmp
+~$*.xlsx
+.aider*
+.codex_tmp/
+_package_stage/
+tenderfinder_out/
+test_outputs_p53/
+test_outputs_p54/
+live_outputs_p54/
+live_outputs_p54_full/
+demo_p52*/
+TENDER_FINDER_Patch_5_4_Live_Production_Candidate/
+TENDER_FINDER_Patch_5_4_Live_Production_Candidate_*.zip
+TENDER_FINDER_Patch_*_Runtime_Package_*.zip
+TENDER_FINDER_Handoff_Package*/
+TENDER_FINDER_CLEAN_RUNTIME_PACKAGE/
+p54pkg*/
+verify_p54_final/
+01 Code/CONNECTOR_SWEEP/raw_runs/*/csv/
+01 Code/CONNECTOR_SWEEP/raw_runs/*/json/
+CLAUDE_FIX_PROMPT_patch-*.md

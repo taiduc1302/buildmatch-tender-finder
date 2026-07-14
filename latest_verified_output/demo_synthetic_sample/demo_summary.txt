@@ -1,0 +1,62 @@
+============================================================
+TENDER_FINDER DEMO COMPLETE - where to look:
+1. Executive_Summary          -> headline numbers + how to read
+2. Top_Civil_Leads_Printable  -> top 50 leads WITH contacts (print this)
+3. Action_Center              -> where to register for LIVE biddable tenders
+4. BID_NOW_Active_Tenders     -> public + BC Bid tender signals this run
+5. BID_LATER_Future_Projects  -> 6 leads; start at fit >= 60 (6)
+6. New_This_Run               -> 6 leads not seen in prior demo_history workbook
+7. Outreach_Tracker           -> 6 action rows; manual statuses merge forward
+8. Source_Roadmap_Printable   -> where TENDER_FINDER grows next: 351 candidate sources ranked (0 priority-next); full detail in Potential_Sources_Next
+Build time: 8.08s | Track B: 0.00s | Records pulled: 27,260 | BC Bid open civil: 0
+Workbook: demo_out_synthetic\TENDER_FINDER_DEMO_Opportunities_Three_Buckets.xlsx
+BC Bid public URL: https://bcbid.gov.bc.ca/page.aspx/en/rfp/request_browse_public
+BC Bid status: SKIPPED_NO_FETCH
+Email intake status: EMAIL_INTAKE_REJECTED_FILES
+Email alert files seen: 3
+Email tender rows parsed: 0
+Email BID NOW rows: 0
+Email non-actionable/history rows: 0
+Email rejected/duplicate files: 3
+BID NOW total: 0 | civil=YES: 0 | open civil: 0 | contacts found: 0
+============================================================
+
+----------------------------------------------------------------------------
+TENDER_FINDER LIVE-TENDER EMAIL SETUP - status: STATE_A
+----------------------------------------------------------------------------
+WHY THIS MATTERS:
+  Cities like Surrey, Maple Ridge, Township Langley, Richmond, and Pitt
+  Meadows publish their live biddable tenders on portal systems. TENDER_FINDER does
+  not log in or store passwords. Instead, you connect an approved email
+  intake provider, enable civil alert emails, and TENDER_FINDER reads those alerts
+  from your own inbox or imported local folder.
+
+WHERE TO REGISTER:
+  1. bidsandtenders.ca - vendor registration, civil/roads/utilities/site
+     servicing alerts. Verify exact category labels on the portal.
+     URL: https://www.bidsandtenders.ca
+  2. bcbid.gov.bc.ca - supplier registration for notifications/submission.
+     Public browse requires no login, but automation may hit browser-check.
+     URL: https://www.bcbid.gov.bc.ca
+  3. bidcentral.ca - confirm membership tier and construction/civil alerts.
+     URL: https://www.bidcentral.ca
+  4. civicinfo.bc.ca/bids - optional local-government bids aggregator.
+     URL: https://www.civicinfo.bc.ca/bids
+
+WHAT HAPPENS IF YOU DO THIS:
+  Alert emails start arriving in your inbox. In this patch, open TENDER_FINDER Launcher,
+  click Create / Open Email Import Folder, save or copy approved .eml alerts
+  into that folder, click Test Email Import, then click Run Demo With Email
+  Alerts. TENDER_FINDER can fill BID NOW with real open tenders, closing dates,
+  contacts, and links.
+
+WHAT HAPPENS IF YOU DO NOT DO THIS:
+  BID NOW stays limited to public-page signals and historically closed tenders.
+  BID LATER still works fully with 6 future-project leads.
+
+YOUR CURRENT STATUS:
+  LIVE - Manual local folder import connected; 3 canonical-domain alert emails detected; parsed tender rows depend on alert content.
+  Active provider: Manual local folder import
+  Manual import only in this patch: Gmail OAuth, Microsoft OAuth, and IMAP are
+  intentionally not implemented here.
+----------------------------------------------------------------------------

@@ -1,0 +1,1 @@
+A local .env.tenderfinder.local file was present in the input package and was intentionally excluded from Patch 4.3 so API keys are not committed. Copy .env.tenderfinder.local.example to .env.tenderfinder.local and add a key locally to run Tavily search.

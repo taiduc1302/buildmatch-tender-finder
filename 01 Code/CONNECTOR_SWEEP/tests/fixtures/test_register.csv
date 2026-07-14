@@ -1,0 +1,9 @@
+source_id,source_name,source_category,owner_organization,geography_coverage,source_type,official_url,suggested_fetch_type,access_status,priority_tier,likely_signal_type,notes,expected_url_check_status
+TST-01,Valid live page,A_active_tender,GitHub,Global,html_listing,https://github.com/,html_listing,public,1,active tender,Known-good 200 page,OK
+TST-02,Invalid URL syntax,A_active_tender,Test Org,Test,html_listing,http://,html_listing,public,3,active tender,Malformed URL with no host,BROKEN_OTHER
+TST-03,Fake DNS host,A_active_tender,Ghost Org,Test,html_listing,https://nonexistent-tenderfinder-xyz9z.invalid/,html_listing,public,3,active tender,Reserved .invalid TLD never resolves,BROKEN_DNS
+TST-04,Removed page 404,A_active_tender,GitHub,Global,html_listing,https://github.com/tenderfinder-nonexistent-path-xyz-404,html_listing,public,2,active tender,Path that returns 404,BROKEN_404
+TST-05,Login-only portal,F_supplier_registration,Test Portal,Test,login_required,https://supplier.example/login,login_required,login_required,2,supplier registration,Manual/login workflow stub,LOGIN_OR_MANUAL
+TST-06,City bids and tenders,A_active_tender,Test City,Test City,bidsandtenders,https://testcity.bidsandtenders.ca/,html_listing,public,1,active tender,bids&tenders connector portal,NEEDS_CONNECTOR_NOT_SIMPLE_SCRAPE
+TST-07,Org Bonfire portal,A_active_tender,Test Org,Test,Bonfire,https://testorg.bonfirehub.ca/,html_listing,login_required,1,active tender,Bonfire connector portal,NEEDS_CONNECTOR_NOT_SIMPLE_SCRAPE
+TST-08,WAF-protected official site,B_capital_project,BC Hydro,BC,html_listing,https://www.bchydro.com/work-with-us/suppliers.html,html_listing,public,1,capital project,Official site likely to bot-block with 403,FORBIDDEN_BUT_LIKELY_VALID

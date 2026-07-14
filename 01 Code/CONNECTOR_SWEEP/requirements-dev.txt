@@ -1,0 +1,9 @@
+# Test/dev-only dependencies (runtime deps are in requirements.txt).
+# Added during package sanitization: these were undeclared but required
+# by parts of the test suite.
+pyyaml>=6.0          # tests/run_regression.py
+pandas>=2.0          # tests/test_search_api_errors.py (via link checker)
+requests>=2.31       # tests/test_search_api_errors.py
+urllib3>=2.0         # tests/test_search_api_errors.py
+pdfplumber>=0.11     # Surrey PDF parsing + tests/test_surrey_pdf_parser.py
+reportlab>=4.0       # tests/test_surrey_pdf_parser.py (generates test PDFs)

@@ -1,0 +1,5 @@
+# macOS/Linux shell launchers must keep LF endings even when checked out on
+# Windows (core.autocrlf=true would otherwise rewrite them to CRLF, which
+# breaks the shebang line with "bad interpreter" when run on a Mac).
+*.command text eol=lf
+*.sh text eol=lf

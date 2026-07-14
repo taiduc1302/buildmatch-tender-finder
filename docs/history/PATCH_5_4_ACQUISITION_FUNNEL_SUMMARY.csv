@@ -1,0 +1,16 @@
+﻿metric,count,basis
+Source Universe count,159,Source_Register rows from v7_1 preflight
+Source Register coverage,159,159/159 rows classified
+Coded connector count,17,tenderfinder_dev_app_endpoints all17 run
+Working live automated sources,5,Loaded with live pulled records
+Semi-automated / PDF candidates,10,Source coverage bucket
+Semi-automated / RSS / HTML / platform candidates,62,Source coverage bucket
+Manual / P3 / login / paid sources,49,Source coverage bucket
+Records pulled,27260,all17 live source summary
+Records normalized,19146,all17 live source summary
+Clean TENDER_FINDER candidates,5393,Future_Projects clean only
+Watchlist candidates,992,Run_Queue/watchlist rows
+Bulk/noisy records,12766,Bulk_Intake_Raw plus Rejected_Archive/context rows
+Rejected/context records,6934,Rejected_Archive rows
+Failed/manual sources,9,Connector entries requiring non-live or repair workflow
+Safe-to-promote rows,3,ACCEPT rows in core_live_review_ACCEPT_sample.xlsx

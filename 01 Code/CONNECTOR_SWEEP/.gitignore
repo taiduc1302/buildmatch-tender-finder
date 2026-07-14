@@ -1,0 +1,10 @@
+# Local secrets
+.env
+.env.local
+.env.tenderfinder.local
+
+# Python/cache/output
+__pycache__/
+*.pyc
+link_audit_out/
+link_audit_output/
