@@ -109,22 +109,13 @@ change; current scoring behavior is preserved exactly.
 
 ## Known issues
 
-Two pre-existing Patch 5.23 validation failures are intentionally documented
-and not fixed in this repository-prep task:
+No open data-integrity issue is currently documented for the slim user-master
+anti-fixture path. Broader product and live-connector limitations remain
+documented in `KNOWN_LIMITATIONS.md` and `DEMO_LIMITATIONS.md`.
 
-1. Fixture/synthetic future-project rows can reach `Outreach_Tracker` because
-   `select_user_future_projects_rows()` does not apply
-   `_is_fixture_or_example_row()` before returning selected rows. See
-   `01 Code/CONNECTOR_SWEEP/tenderfinder_demo_three_buckets.py:6761` and the
-   downstream outreach construction at line 6853. The final guard reports
-   `No fixture/synthetic/example rows in Outreach_Tracker: FAIL`.
-2. Dashboard `future_full` is populated from raw `future_total` at
-   `tenderfinder_demo_three_buckets.py:7146`, while verification recounts the
-   demo sheet with fixture rows excluded at lines 7285-7296. This produces the
-   known Dashboard counter mismatch.
+## Fixed
 
-These are real consistency defects in the user-master output path. Do not
-weaken the validation checks to hide them.
+- 2026-07-14: `_is_fixture_or_example_row()` now excludes fixture rows before slim `Future_Projects`/`Outreach_Tracker` selection, and `future_total_live` keeps Dashboard `future_full` aligned with the validator's non-fixture recount.
 
 ## Credentials and generated data
 

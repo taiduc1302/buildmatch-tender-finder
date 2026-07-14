@@ -6762,19 +6762,22 @@ def select_user_future_projects_rows(
     demo_wb: Workbook, prior_lookup: dict[str, Any], run_date: str, limit: int = FUTURE_PROJECTS_USER_LIMIT,
 ) -> tuple[list[list[Any]], list[dict[str, Any]], int]:
     """Curate a practical, user-sized subset of this run's
-    BID_LATER_Future_Projects: only HIGH/MEDIUM signal-quality rows with a
-    real fit_score survive (excludes low-confidence/noisy records - terminal
-    archive rows are already excluded upstream, before they ever reach
+    BID_LATER_Future_Projects: fixture/example rows are excluded first, then
+    only HIGH/MEDIUM signal-quality rows with a real fit_score survive
+    (excludes low-confidence/noisy records - terminal archive rows are
+    already excluded upstream, before they ever reach
     BID_LATER_Future_Projects), ranked by signal quality then fit_score
-    (new-this-run rows win ties), capped at `limit`. The full raw list of
-    `total_available` stays in the demo workbook only.
-    Returns (rows_for_write, row_dicts, total_available_in_demo).
+    (new-this-run rows win ties), capped at `limit`. The full technical demo
+    sheet remains unchanged; `total_available_live` counts only non-fixture
+    rows eligible to be described in the user-facing master.
+    Returns (rows_for_write, row_dicts, total_available_live_in_demo).
     """
     if "BID_LATER_Future_Projects" not in demo_wb.sheetnames:
         return [], [], 0
     src_rows = _read_sheet_rows_as_dicts(demo_wb["BID_LATER_Future_Projects"])
-    total_available = len(src_rows)
-    candidates = [r for r in src_rows if r.get("signal_quality") in ("HIGH", "MEDIUM") and r.get("fit_score") not in (None, "")]
+    live_src_rows = [r for r in src_rows if not _is_fixture_or_example_row(r)]
+    total_available_live = len(live_src_rows)
+    candidates = [r for r in live_src_rows if r.get("signal_quality") in ("HIGH", "MEDIUM") and r.get("fit_score") not in (None, "")]
 
     def sort_key(r: dict[str, Any]) -> tuple[int, int, int]:
         quality_rank = 0 if r.get("signal_quality") == "HIGH" else 1
@@ -6799,7 +6802,7 @@ def select_user_future_projects_rows(
         ]
         out_rows.append(values)
         out_dicts.append(dict(zip(USER_FUTURE_PROJECTS_HEADERS, values)))
-    return out_rows, out_dicts, total_available
+    return out_rows, out_dicts, total_available_live
 
 
 OUTREACH_TRACKER_HEADERS = [
@@ -7114,7 +7117,7 @@ def build_user_facing_master_workbook(
         "Tender / Project Title": 46, "Scope Summary": 60, "Notes": 40, "Owner / Client": 30, "Source URL": 50,
     })
 
-    future_rows, future_dicts, future_total = select_user_future_projects_rows(demo_wb, prior["future_projects"], run_timestamp)
+    future_rows, future_dicts, future_total_live = select_user_future_projects_rows(demo_wb, prior["future_projects"], run_timestamp)
     ws = master_wb["Future_Projects"]
     _clear_worksheet_contents(ws)
     _trim_sheet_to_columns(ws, len(USER_FUTURE_PROJECTS_HEADERS))
@@ -7143,7 +7146,7 @@ def build_user_facing_master_workbook(
     # the mismatch instead of silently reporting two copies of one number.
     counts: dict[str, Any] = {
         "active_shown": len(active_rows), "active_full": count_live_demo_rows(demo_wb, "BID_NOW_Active_Tenders"),
-        "future_shown": len(future_rows), "future_full": future_total,
+        "future_shown": len(future_rows), "future_full": future_total_live,
         "outreach_shown": len(outreach_rows),
         "sources_checked": len(source_status_rows),
         "sources_issues": sum(1 for r in source_status_rows if r[6]),
@@ -7174,7 +7177,7 @@ def build_user_facing_master_workbook(
         "run_timestamp": run_timestamp,
         "active_tenders_rows": len(active_rows),
         "future_projects_rows": len(future_rows),
-        "future_projects_total_in_demo": future_total,
+        "future_projects_live_total_in_demo": future_total_live,
         "outreach_rows": len(outreach_rows),
         "source_status_rows": len(source_status_rows),
         "dashboard_counts": counts,
@@ -7253,6 +7256,7 @@ def verify_user_master(
         future_ws is not None and len(future_rows) <= FUTURE_PROJECTS_USER_LIMIT and len(future_rows) == stats.get("future_projects_rows", -1)
     )
     checks["future_projects_no_placeholder_rows"] = all(any(v not in (None, "") for v in r.values()) for r in future_rows)
+    checks["future_projects_no_fixture_rows"] = _rows_free_of_fixture_markers(future_rows)
 
     dash_ws = wb["Dashboard"] if wb and "Dashboard" in wb.sheetnames else None
     checks["dashboard_current"] = bool(dash_ws) and dash_ws["B2"].value == stats.get("run_timestamp")
@@ -7306,7 +7310,11 @@ def verify_user_master(
         return "PASS" if ok else "FAIL"
 
     dashboard_counts_pass = all(checks[f"dashboard_count_{k}"] for k in dashboard_checks)
-    fixture_free = checks["active_tenders_no_fixture_rows"] and checks["outreach_no_fixture_rows"]
+    fixture_free = (
+        checks["active_tenders_no_fixture_rows"]
+        and checks["future_projects_no_fixture_rows"]
+        and checks["outreach_no_fixture_rows"]
+    )
 
     print("FINAL USER MASTER CHECK", flush=True)
     print(f"- Full demo workbook: {_pf(checks['full_demo_produced'])}", flush=True)
@@ -7317,8 +7325,9 @@ def verify_user_master(
     print(f"- No duplicate-purpose tabs visible: {_pf(checks['no_duplicate_purpose_tabs_visible'])}", flush=True)
     print(f"- Active_Tenders refreshed/current: {_pf(checks['active_tenders_current'] and checks['active_tenders_no_placeholder_rows'])} ({len(active_rows)} rows)", flush=True)
     print(f"- No fixture/synthetic/example rows in Active_Tenders: {_pf(checks['active_tenders_no_fixture_rows'])}", flush=True)
+    print(f"- No fixture/synthetic/example rows in Future_Projects: {_pf(checks['future_projects_no_fixture_rows'])}", flush=True)
     print(f"- No fixture/synthetic/example rows in Outreach_Tracker: {_pf(checks['outreach_no_fixture_rows'])}", flush=True)
-    print(f"- Future_Projects curated/current: {_pf(checks['future_projects_curated_current'] and checks['future_projects_no_placeholder_rows'])} ({len(future_rows)} of {stats.get('future_projects_total_in_demo', 0)} available)", flush=True)
+    print(f"- Future_Projects curated/current: {_pf(checks['future_projects_curated_current'] and checks['future_projects_no_placeholder_rows'])} ({len(future_rows)} of {stats.get('future_projects_live_total_in_demo', 0)} available)", flush=True)
     print(f"- Dashboard updated/current: {_pf(checks['dashboard_current'])}", flush=True)
     print(f"- Dashboard counts match recounted sheets: {_pf(dashboard_counts_pass)}", flush=True)
     for note in notes:
