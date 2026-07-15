@@ -200,8 +200,10 @@ Self-Test selected
   verified live, 26 ready for live test, 4 manual, 3 need configuration, 1
   blocked, 4 wrong-source; SHA-256
   `1901c7cc73e8e240d74d8e534924c7b814f5ad32b68ee442faa52138f40f0306`.
-- Canonical launcher SHA-256:
+- Canonical launcher normalized-LF SHA-256:
   `ef9176ae45313e90858f9430eea11106e7062c35b7c9abf36070311a04206371`.
+- Canonical Windows CRLF launcher SHA-256:
+  `8083ff824d8d13daa8098360339998337746187a5d6b0707bb0700b0711529a0`.
 - Windows GUI black-box: double-click shortcut launch, Offline/Test Run,
   Keywords validation/reload status, Source Manager, parser test, Add Source
   form, and GUI Self-Test were exercised successfully.

@@ -3,3 +3,8 @@
 # breaks the shebang line with "bad interpreter" when run on a Mac).
 *.command text eol=lf
 *.sh text eol=lf
+
+# Windows launchers must have the same bytes in every clean checkout. This
+# also keeps clean-release ZIP hashes independent of core.autocrlf.
+*.bat text eol=crlf
+*.cmd text eol=crlf
