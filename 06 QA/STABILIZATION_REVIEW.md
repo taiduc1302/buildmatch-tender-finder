@@ -213,11 +213,20 @@ targeted review is in `CODEX_REVIEW_1f649d1.md`.
 - Correction: package-local candidate selection now precedes every external/parent/output fallback.
 - Final disposition: **RESOLVED** — focused regression PASS and repeated full Self-Test selected the checkout's own `00 Master` template.
 
+### TF-STAB-022 — MEDIUM — Clean-release bytes depended on checkout line endings
+
+- Affected paths: `scripts/build_clean_release.py`, `.gitattributes`, and Windows launcher files.
+- Reproduction: the same launcher Git blob produced LF bytes on the stabilization branch and CRLF bytes after a clean Windows checkout with `core.autocrlf=true`; the resulting clean ZIP SHA changed despite equivalent source content.
+- Observed: fixed ZIP metadata was deterministic only within one worktree, not across clean checkouts with different line-ending policies.
+- Expected: identical source content produces identical release-entry bytes on Windows, macOS, and Linux.
+- Correction: release text is canonicalized to LF, with `.bat`/`.cmd` canonicalized to CRLF; Git attributes make Windows launcher checkout bytes explicit.
+- Final disposition: **RESOLVED** — LF/CRLF equivalence regression and repeated clean-release verification PASS.
+
 ## Final review decision
 
 The baseline was not eligible for release, but the current stabilization code
 has resolved every reproduced BLOCKING and HIGH finding while preserving the
 trusted scoring, manual-field, review-history, and frozen-Agent2 behavior.
-Codex targeted review is complete. Final release classification remains tied
-to the separate final package, clean-commit, GitHub CI/integration, and tag
-gates documented in `STABILIZATION_RELEASE_REPORT.md`.
+Codex targeted review is complete. The final package, clean commit, GitHub CI,
+normal integration, and tag gates are documented in
+`STABILIZATION_RELEASE_REPORT.md`.

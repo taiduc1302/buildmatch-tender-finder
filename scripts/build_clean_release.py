@@ -22,6 +22,27 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RELEASE_VERSION = "internal-weekly-beta-v1"
 ARCHIVE_FOLDER = "Tender_Finder_Internal_Weekly_Beta_v1"
 FIXED_ZIP_TIMESTAMP = (2026, 7, 15, 0, 0, 0)
+CANONICAL_TEXT_SUFFIXES = {
+    ".bat",
+    ".cfg",
+    ".cmd",
+    ".command",
+    ".csv",
+    ".html",
+    ".ini",
+    ".json",
+    ".md",
+    ".ps1",
+    ".py",
+    ".sh",
+    ".toml",
+    ".tsv",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+}
+WINDOWS_CRLF_SUFFIXES = {".bat", ".cmd"}
 
 ROOT_FILES = {
     "Launch_TENDER_FINDER_GUI.bat",
@@ -185,6 +206,18 @@ def _zip_write_bytes(archive: zipfile.ZipFile, relative: str, data: bytes) -> No
     archive.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
 
+def canonical_release_bytes(path: Path) -> bytes:
+    """Return checkout-independent bytes for a source release entry."""
+    data = path.read_bytes()
+    suffix = path.suffix.casefold()
+    if suffix not in CANONICAL_TEXT_SUFFIXES:
+        return data
+    normalized = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if suffix in WINDOWS_CRLF_SUFFIXES:
+        return normalized.replace(b"\n", b"\r\n")
+    return normalized
+
+
 def build_release(
     output_dir: Path,
     *,
@@ -199,7 +232,7 @@ def build_release(
     payloads: list[tuple[str, bytes]] = []
     for path in files:
         relative = _safe_relative(path)
-        data = path.read_bytes()
+        data = canonical_release_bytes(path)
         entries.append({"path": relative, "bytes": len(data), "sha256": sha256_bytes(data)})
         payloads.append((relative, data))
 
@@ -213,6 +246,7 @@ def build_release(
         "included_source_files": len(entries),
         "self_contained_executable": False,
         "first_run_install_required": True,
+        "text_line_endings": "LF except .bat/.cmd CRLF",
     }
     included_manifest = "\n".join(
         f"{entry['sha256']}  {entry['bytes']:>10}  {entry['path']}" for entry in entries

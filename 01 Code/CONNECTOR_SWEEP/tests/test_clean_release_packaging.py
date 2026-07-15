@@ -9,7 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from build_clean_release import build_release  # noqa: E402
+from build_clean_release import build_release, canonical_release_bytes  # noqa: E402
 from verify_clean_release import verify_release  # noqa: E402
 
 
@@ -42,10 +42,29 @@ def test_release_verifier_checks_crc_manifest_and_extraction() -> None:
         assert not (extracted / ".git").exists()
 
 
+def test_release_text_bytes_are_checkout_independent() -> None:
+    with tempfile.TemporaryDirectory(prefix="tenderfinder_line_endings_") as temp:
+        base = Path(temp)
+        python_lf = base / "lf.py"
+        python_crlf = base / "crlf.py"
+        batch_lf = base / "lf.bat"
+        batch_crlf = base / "crlf.bat"
+        python_lf.write_bytes(b"print('ok')\n")
+        python_crlf.write_bytes(b"print('ok')\r\n")
+        batch_lf.write_bytes(b"@echo off\necho ok\n")
+        batch_crlf.write_bytes(b"@echo off\r\necho ok\r\n")
+
+        assert canonical_release_bytes(python_lf) == canonical_release_bytes(python_crlf)
+        assert canonical_release_bytes(python_lf) == b"print('ok')\n"
+        assert canonical_release_bytes(batch_lf) == canonical_release_bytes(batch_crlf)
+        assert canonical_release_bytes(batch_lf) == b"@echo off\r\necho ok\r\n"
+
+
 def main() -> int:
     tests = [
         test_allowlist_release_is_deterministic_and_clean,
         test_release_verifier_checks_crc_manifest_and_extraction,
+        test_release_text_bytes_are_checkout_independent,
     ]
     for test in tests:
         test()
