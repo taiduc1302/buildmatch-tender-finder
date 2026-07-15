@@ -59,21 +59,24 @@ final ZIP must be rebuilt from a clean committed checkout with
 
 ## Final clean release
 
-- Source commit: `340e88ba8145a2fd7c30e842d4c1172d60aeaca2`.
+- Source commit: `5805d467aee539985376a3464c98ee7a6e121eb3`.
 - Source worktree dirty: false.
 - ZIP:
   `C:\tenderfinder_out\release_internal_weekly_beta_v1\Tender_Finder_internal-weekly-beta-v1.zip`.
-- Size: 675,899 bytes.
+- Size: 675,632 bytes.
 - Entries: 97 (94 source files plus three generated release records).
 - SHA-256:
-  `221bc3935693cf0f712f37f2655e40e4563c2e09ba291e2bbec9f3a7e0514395`.
+  `912538cf10b8fc716656f0e00b0bd4ae8e55218f64cbd74b76a127e4fb84002a`.
 - Extracted root:
-  `C:\tenderfinder_out\release_internal_weekly_beta_v1_extracted\Tender_Finder_Internal_Weekly_Beta_v1`.
+  `C:\tenderfinder_out\release_internal_weekly_beta_v1_5805d46_extracted\Tender_Finder_Internal_Weekly_Beta_v1`.
 - CRC/manifest/exclusion verification: PASS.
 - Extracted syntax/import/zero-network import guard: PASS.
 - Extracted package secret audit: PASS.
-- Extracted Self-Test: PASS, `111 / 0 / 1 / 4 / 0`, exit 0; manifest:
-  `C:\tenderfinder_out\release_internal_weekly_beta_v1_package_selftest\self_test\self_test_20260715_101236_faad4d66\run_manifest.json`.
+- Extracted Self-Test: PASS, `112 / 0 / 1 / 4 / 0`, zero network attempts,
+  exit 0; manifest:
+  `C:\tenderfinder_out\release_internal_weekly_beta_v1_5805d46_selftest\self_test\self_test_20260715_110434_b78f713e\run_manifest.json`.
+- Repeated clean build SHA equality: PASS. Release text policy is LF except
+  `.bat`/`.cmd` CRLF, independent of checkout line endings.
 
 The first unattended setup attempt on this Windows profile correctly returned
 nonzero with actionable instructions because no supported system Python was
@@ -81,6 +84,12 @@ on PATH (only stale Python 3.10/3.13 registrations). With an available local
 Python 3.12 placed on PATH, the same final extracted package created a new
 `.venv`, installed all requirements and Chromium, preserved the canonical
 launcher, and created a Desktop shortcut targeting the final extracted path.
-Launching that shortcut opened the final GUI with Live Run, Offline/Test Run,
-Self-Test, Keywords, and Source Checks visible. This remains a Python source
-application; Python/first-run dependency installation is a prerequisite.
+Launching that exact shortcut opened the `5805d467` extracted GUI with Live
+Run, Offline/Test Run, Self-Test, Keywords, and Source Checks visible. Keywords
+showed VALID, 227 active rules, canonical/LKG state, and the exact extracted
+path. Source Manager showed 39 configured, 27 runtime-eligible, one
+verified-live, and all CRUD/test controls. GUI Self-Test visibly passed with
+`112 / 0 / 1 / 4 / 0`, zero network attempts, and exit 0; manifest:
+`C:\tenderfinder_out\self_test\self_test_20260715_111646_29605475\run_manifest.json`.
+This remains a Python source application; Python/first-run dependency
+installation is a prerequisite.

@@ -18,6 +18,14 @@ application, not a production SaaS product and not a self-contained `.exe`.
 - Stabilization branch: `stabilize/internal-weekly-beta`.
 - Main stabilization commit:
   `340e88ba8145a2fd7c30e842d4c1172d60aeaca2`.
+- Windows CI portability follow-up:
+  `60dbdd6aa9aa3f6571ac112fd4291bdf0151bdd7`.
+- Primary PR merge commit:
+  `d38de2306a40b7ce6ab6c1b022ab1756de6b45eb`.
+- Release reproducibility follow-up:
+  `d8c8dd83af08760aa1dc1c98e1f6947546e853af`.
+- Follow-up PR merge commit and final artifact source:
+  `5805d467aee539985376a3464c98ee7a6e121eb3`.
 - Repository-local author:
   `taiduc1302 <38831891+taiduc1302@users.noreply.github.com>`.
 - No force push, destructive reset, shared-history rewrite, or rebase was used.
@@ -50,6 +58,7 @@ The baseline reproduction details are preserved in
 | TF-STAB-019 | MEDIUM | No dedicated founder Keywords area existed. | Dedicated Keywords tab with path/status/counts/categories/LKG/errors/actions. | GUI headless and Windows visual checks. | RESOLVED; PASS. |
 | TF-STAB-020 | HIGH | Unknown source columns were lost; no durable external backup. | Full validation, unknown-column retention, external timestamped backup, fsync, atomic replace. | Success/failure-path registry test. | RESOLVED; PASS. |
 | TF-STAB-021 | HIGH | Checkout Self-Test selected a newer template from another installation. | Current package template now wins before external fallbacks. | Foreign-newer/local-older isolation regression plus full Self-Test. | RESOLVED; PASS. |
+| TF-STAB-022 | MEDIUM | Equivalent Git content produced different release bytes under LF versus CRLF checkout policies. | Canonical release text bytes: LF except Windows `.bat`/`.cmd` CRLF; explicit Git attributes. | LF/CRLF equivalence and repeated release builds. | RESOLVED; PASS. |
 
 Codex targeted review completed and all blocking/high findings resolved.
 External Claude review is an optional future additional audit, not a gate.
@@ -112,15 +121,25 @@ The three explicit exclusions are controlled live proof, visual GUI
 black-box, and frozen Agent2 live execution; each has a separate release gate
 or static proof and is not counted as PASS.
 
+The exact GitHub CI environment was then replayed locally after the portability
+follow-up. Self-Test `self_test_20260715_102813_ad5b276b` returned `112 passed /
+0 failed / 2 skipped / 3 intentionally excluded / 0 no-fixture`, zero network
+attempts, and exit 0. The second skip is the clean-worktree assertion while the
+two test files were intentionally modified but not yet committed.
+
 Extracted final-package Self-Test
-`self_test_20260715_101236_faad4d66`: `111 passed / 0 failed / 1 skipped / 4
-intentionally excluded / 0 no-fixture`, exit 0. The fourth exclusion records
-that a source ZIP has no Git checkout metadata.
+`self_test_20260715_110434_b78f713e`: `112 passed / 0 failed / 1 skipped / 4
+intentionally excluded / 0 no-fixture`, zero network attempts, exit 0. The
+fourth exclusion records that a source ZIP has no Git checkout metadata.
+
+The same final extracted package was then installed and its Self-Test was run
+from the GUI. Run `self_test_20260715_111646_29605475` visibly reported PASS
+with the same `112 / 0 / 1 / 4 / 0` totals, zero network attempts, and exit 0.
 
 Focused results include: syntax/import/network guard PASS; security 11/11;
 source registry 11/11; keyword configuration 13/13; RESCORE E2E 1/1;
 standalone safeguards 7/7; engine 2/2; launcher 5/5; offline CI 2/2; packaging
-2/2; routing 21/21; Outreach, review discovery, and tender routing PASS.
+3/3; routing 21/21; Outreach, review discovery, and tender routing PASS.
 
 ## 6. Live evidence
 
@@ -149,8 +168,10 @@ they work. Proof paths are recorded in
   results/logs, and advanced settings visibility.
 - Offline/Test Run produced workbook/report/summary outside the package.
 - Moved-package GUI Self-Test: PASS with honest aggregate totals.
-- Final release shortcut was launched after final setup and opened the expected
-  GUI with canonical 227-rule status.
+- The final `5805d467` release shortcut was launched after fresh setup. It
+  opened the expected GUI, showed the exact extracted keyword/source paths,
+  canonical VALID 227-rule status, all run/source controls, and a visible
+  Self-Test PASS dialog with `112 / 0 / 1 / 4 / 0` totals.
 - Sanitized screenshots:
   `06 QA/RELEASE_EVIDENCE_INTERNAL_BETA_V1/screenshots/`.
 
@@ -171,17 +192,19 @@ they work. Proof paths are recorded in
 - ZIP:
   `C:\tenderfinder_out\release_internal_weekly_beta_v1\Tender_Finder_internal-weekly-beta-v1.zip`.
 - Source commit:
-  `340e88ba8145a2fd7c30e842d4c1172d60aeaca2`.
+  `5805d467aee539985376a3464c98ee7a6e121eb3`.
 - Source worktree dirty: false.
 - File count: 97 archive entries (94 source files plus three generated release
   metadata files).
-- Size: 675,899 bytes.
+- Size: 675,632 bytes.
 - SHA-256:
-  `221bc3935693cf0f712f37f2655e40e4563c2e09ba291e2bbec9f3a7e0514395`.
+  `912538cf10b8fc716656f0e00b0bd4ae8e55218f64cbd74b76a127e4fb84002a`.
 - Extracted test path:
-  `C:\tenderfinder_out\release_internal_weekly_beta_v1_extracted\Tender_Finder_Internal_Weekly_Beta_v1`.
+  `C:\tenderfinder_out\release_internal_weekly_beta_v1_5805d46_extracted\Tender_Finder_Internal_Weekly_Beta_v1`.
 - CRC, manifest, exclusion, syntax/import, zero-network import, package secret
   scan, extracted Self-Test, setup, shortcut, and final GUI launch: PASS.
+- A second clean build from the same commit produced the identical ZIP SHA;
+  text-entry policy is LF except Windows `.bat`/`.cmd` CRLF.
 - ZIP contains no `.git`, `.venv`, `.codex_tmp`, caches, logs, user data,
   browser state, email content, secrets, or generated tender outputs.
 
@@ -192,15 +215,26 @@ they work. Proof paths are recorded in
 - Branch: `stabilize/internal-weekly-beta` (pushed normally).
 - Pull request: #1,
   `https://github.com/taiduc1302/buildmatch-tender-finder/pull/1`.
-- CI: pending at the time of this report commit; merge is prohibited until it
-  passes.
-- Final `main` SHA: pending normal PR integration.
-- Release tag: `internal-weekly-beta-v1` pending final integration.
-- Local/remote equality and final clean-worktree confirmation: final gate after
-  merge/tag.
-
-This section will be updated after the normal merge and tag. The unavoidable
-post-integration SHA/tag proof is also recorded in the final delivery response.
+- First PR CI run `29436216670` correctly failed two environment-sensitive test
+  assertions (Windows 8.3 path spelling and inherited no-open policy). Runtime
+  behavior did not fail. Commit `60dbdd6` made both assertions semantic and
+  environment-isolated.
+- Required PR CI: run `29436672628` (`Tender Finder Offline CI` run #6),
+  completed `success` on Windows/Python 3.12.
+- PR #1 merged normally, without rebase or force, as merge commit
+  `d38de2306a40b7ce6ab6c1b022ab1756de6b45eb`.
+- Reproducibility follow-up: PR #2,
+  `https://github.com/taiduc1302/buildmatch-tender-finder/pull/2`.
+- Follow-up CI: run `29438859006` (`Tender Finder Offline CI` run #8),
+  completed `success` on Windows/Python 3.12.
+- PR #2 merged normally, without rebase or force, as merge commit
+  `5805d467aee539985376a3464c98ee7a6e121eb3`.
+- Release tag: annotated `internal-weekly-beta-v1`, targeting the final
+  report-only commit on `main`.
+- Local `main`, `origin/main`, and the peeled release tag target were verified
+  equal with a clean worktree after publication. The exact final SHA is also
+  printed in the final delivery response because a commit cannot contain its
+  own hash.
 
 ## 11. Remaining limitations
 
@@ -222,13 +256,11 @@ post-integration SHA/tag proof is also recorded in the final delivery response.
 
 ## 12. Final classification
 
-`STABILIZATION RELEASE: CONDITIONAL PASS`
+`STABILIZATION RELEASE: PASS — INTERNAL WEEKLY BETA`
 
-All code, security, data-preservation, source-truthfulness, GUI, package, and
-live-claim gates pass. The sole remaining condition at this report revision is
-successful GitHub Actions, normal PR integration, final tag publication, and
-local/remote equality. After those administrative gates pass, this line will
-be changed to the required internal-weekly-beta PASS classification.
+All code, security, data-preservation, source-truthfulness, GUI, package,
+controlled-live, GitHub Actions, normal integration, and release-publication
+gates pass within the internal-weekly-beta scope and stated limitations.
 
 ## Acceptance checklist
 
@@ -241,4 +273,4 @@ be changed to the required internal-weekly-beta PASS classification.
 - [x] Windows setup, shortcut, GUI, Offline/Test Run, and package extraction
   acceptance passed.
 - [x] Clean ZIP contains no secrets, runtime state, or user data.
-- [ ] GitHub Actions, normal merge, final tag, and local/remote equality.
+- [x] GitHub Actions, normal merge, final tag, and local/remote equality.
