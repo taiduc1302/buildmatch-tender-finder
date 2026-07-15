@@ -13,23 +13,33 @@ name aliases are reference-only; they do not define normal runtime sources.
 """
 
 import csv
-import ipaddress
 import os
 import re
+import shutil
+import uuid
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 from tenderfinder_package_paths import detect_package_root, sources_config_path
+from tenderfinder_runtime import user_settings_root
+from tenderfinder_excel_safety import safe_untrusted_excel_value
+from tenderfinder_url_safety import URLSafetyError, validate_public_url_syntax
 
 
 REGISTRY_ENV_VAR = "TENDER_FINDER_SOURCES_CONFIG"
-SOURCE_COLUMNS = (
+LEGACY_SOURCE_COLUMNS = (
     "source_id", "name", "track", "active", "adapter", "municipality", "url", "rss",
     "url_variants", "no_retry", "category", "tier", "platform", "fetch_type", "endpoint",
     "layer_index", "layer_keywords", "priority_tier", "access_status",
     "automation_feasibility", "output_route", "prompt_type", "status", "last_probe_status",
     "last_good_endpoint", "notes",
 )
+OPERATIONAL_COLUMNS = (
+    "operational_status", "last_tested_at", "last_test_type", "last_test_result",
+    "last_http_status", "last_error", "last_candidate_count", "last_normalized_count",
+)
+LIVE_TEST_QUERY_COLUMNS = ("test_query_where", "test_query_order_by")
+SOURCE_COLUMNS = LEGACY_SOURCE_COLUMNS + OPERATIONAL_COLUMNS + LIVE_TEST_QUERY_COLUMNS
 SOURCE_TRACKS = frozenset({"tender", "development"})
 TENDER_ADAPTERS = frozenset({"public_listing", "bc_bid_browser"})
 DEVELOPMENT_ADAPTERS = frozenset(
@@ -40,6 +50,33 @@ DEVELOPMENT_ADAPTERS = frozenset(
 )
 SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]{2,63}$")
 RESERVED_SOURCE_IDS = frozenset({"email_alert_intake"})
+OPERATIONAL_STATUSES = frozenset(
+    {
+        "verified_live",
+        "ready_for_live_test",
+        "adapter_fixture_pass",
+        "config_valid_only",
+        "needs_configuration",
+        "manual_only",
+        "blocked",
+        "wrong_source",
+        "deprecated",
+    }
+)
+RUNTIME_ELIGIBLE_STATUSES = frozenset(
+    {"verified_live", "ready_for_live_test", "adapter_fixture_pass"}
+)
+LAST_TEST_TYPES = frozenset(
+    {"", "imported_history", "configuration_validation", "offline_fixture", "live_source_test"}
+)
+PLACEHOLDER_MARKERS = (
+    "disabled_pending",
+    "placeholder",
+    "replace_me",
+    "needs_exact_url",
+    "pending_office_network",
+    "example.invalid",
+)
 
 
 class SourceRegistryError(RuntimeError):
@@ -63,28 +100,84 @@ def resolve_registry_path(path=None, root=None):
 
 
 def _is_public_url(value):
-    parsed = urlparse(str(value or "").strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
-        return False
-    hostname = parsed.hostname.casefold().rstrip(".")
-    if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
-        return False
+    """Compatibility boolean for the no-network registry validation step."""
     try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        return True
-    return not (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_reserved
-        or address.is_multicast
-        or address.is_unspecified
+        validate_public_url_syntax(value)
+    except URLSafetyError:
+        return False
+    return True
+
+
+def _looks_like_url(value):
+    text = str(value or "").strip().casefold()
+    return text.startswith(("http://", "https://", "file:", "ftp:", "\\\\", "//"))
+
+
+def _is_placeholder(value):
+    text = str(value or "").strip().casefold()
+    return bool(text) and any(marker in text for marker in PLACEHOLDER_MARKERS)
+
+
+def _safe_nonnegative_integer(value, label):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a non-negative whole number") from exc
+    if parsed < 0:
+        raise ValueError(f"{label} must be a non-negative whole number")
+    return parsed
+
+
+def derive_operational_status(row):
+    """Derive a conservative status for pre-stabilization CSV rows."""
+    explicit = str(row.get("operational_status", "") or "").strip().casefold()
+    if explicit:
+        return explicit
+    access = str(row.get("access_status", "") or "").strip().casefold()
+    legacy_status = str(row.get("status", "") or "").strip().casefold()
+    last_probe = str(row.get("last_probe_status", "") or "").strip().casefold()
+    endpoint = str(row.get("endpoint", "") or "").strip()
+    notes = str(row.get("notes", "") or "").casefold()
+    wrong_markers = (
+        "wrong_layer", "picked_permits", "building_permits_only", "not_found_infra",
+        "not_found_ocp", "do not connect",
     )
+    if "wrong_layer" in access or "wrong layer" in notes or any(marker in last_probe for marker in wrong_markers):
+        return "wrong_source"
+    if access in {"manual_p3_only", "paid_or_login_skip"} or (
+        str(row.get("track", "")).casefold() == "tender"
+        and ("membership likely" in notes or "login platform skipped" in notes)
+    ):
+        return "manual_only"
+    if access in {"access_test_required", "gated_office_network"} or _is_placeholder(endpoint):
+        return "blocked"
+    if access in {"needs_exact_url", "endpoint_stale"} or "slug_to_verify" in legacy_status:
+        return "needs_configuration"
+    # Historical LIVE/CONFIRMED labels are retained in their legacy columns,
+    # but stabilization does not silently promote them to current
+    # ``verified_live``.  A controlled live test with structured metadata is
+    # the only operation that assigns that status.
+    live_markers = ("live", "gold_", "pulled_", "capital_context_", "trailing_issued_")
+    if legacy_status in {"live", "confirmed"} or any(marker in last_probe for marker in live_markers):
+        return "ready_for_live_test"
+    if str(row.get("track", "")).casefold() == "tender":
+        return "ready_for_live_test"
+    if access in {"ready_for_load", "ready_for_probe", "trailing_context"}:
+        return "ready_for_live_test"
+    return "config_valid_only"
 
 
 def _normalized_source_row(row):
-    out = {column: str(row.get(column, "") or "").strip() for column in SOURCE_COLUMNS}
+    out = {
+        str(column): str(value or "").strip()
+        for column, value in dict(row or {}).items()
+        if column is not None
+    }
+    for column in SOURCE_COLUMNS:
+        out.setdefault(column, "")
     out["source_id"] = out["source_id"].casefold()
     out["track"] = out["track"].casefold()
     out["active"] = out["active"].upper()
@@ -94,16 +187,40 @@ def _normalized_source_row(row):
         out["fetch_type"] = out["adapter"]
     if out["track"] == "development" and not out["endpoint"]:
         out["endpoint"] = out["url"]
+    out["operational_status"] = derive_operational_status(out)
     return out
 
 
-def source_readiness_errors(row):
-    """Return reasons why one row cannot be enabled or explicitly tested.
+def _url_field_error(label, value):
+    try:
+        validate_public_url_syntax(value)
+    except URLSafetyError as exc:
+        return f"{label} is unsafe: {exc}"
+    return ""
 
-    Disabled rows are allowed to be incomplete drafts in the canonical CSV.
-    This helper is the single readiness gate used when enabling/running them.
-    """
+
+def _network_fields(row):
+    fields = []
+    track = str(row.get("track", "") or "").casefold()
+    for label in ("url", "rss"):
+        value = str(row.get(label, "") or "").strip()
+        if value and (track == "tender" or _looks_like_url(value)):
+            fields.append((label, value))
+    fields.extend(
+        ("url_variants", part.strip())
+        for part in str(row.get("url_variants", "")).split("|")
+        if part.strip()
+    )
+    for label in ("endpoint", "last_good_endpoint"):
+        value = str(row.get(label, "") or "").strip()
+        if value and _looks_like_url(value):
+            fields.append((label, value))
+    return fields
+
+
+def _row_configuration_errors(row):
     errors = []
+    status = row["operational_status"]
     if not row["name"]:
         errors.append("name is required")
     if row["track"] == "tender":
@@ -114,13 +231,8 @@ def source_readiness_errors(row):
                 "custom adapter required; supported tender adapters are "
                 + ", ".join(sorted(TENDER_ADAPTERS))
             )
-        if not _is_public_url(row["url"]):
-            errors.append("tender url must be a public http(s) URL")
-        if row["rss"] and not _is_public_url(row["rss"]):
-            errors.append("rss must be a public http(s) URL")
-        for variant in (part.strip() for part in row["url_variants"].split("|") if part.strip()):
-            if not _is_public_url(variant):
-                errors.append(f"invalid url_variants entry '{variant}'")
+        if not row["url"]:
+            errors.append("tender url is required")
     elif row["track"] == "development":
         if not row["adapter"]:
             errors.append("adapter is required")
@@ -131,9 +243,64 @@ def source_readiness_errors(row):
             )
         if not row["endpoint"]:
             errors.append("development endpoint is required")
-        if row["url"] and "://" in row["url"] and not _is_public_url(row["url"]):
-            errors.append("development url must be a public http(s) URL when supplied")
+    for label, value in _network_fields(row):
+        error = _url_field_error(label, value)
+        if error:
+            errors.append(error)
+    placeholder_fields = [
+        label for label in ("url", "rss", "endpoint", "last_good_endpoint")
+        if _is_placeholder(row.get(label, ""))
+    ]
+    if placeholder_fields and status in RUNTIME_ELIGIBLE_STATUSES:
+        errors.append(
+            "placeholder value is incompatible with runnable operational_status "
+            f"({', '.join(placeholder_fields)})"
+        )
+    test_where = str(row.get("test_query_where") or "").strip()
+    if len(test_where) > 500 or ";" in test_where or any(ord(ch) < 32 for ch in test_where):
+        errors.append(
+            "test_query_where must be at most 500 characters and contain no semicolon or control character"
+        )
+    test_order = str(row.get("test_query_order_by") or "").strip()
+    if test_order and not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*(?:\s+(?:ASC|DESC))?"
+        r"(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*(?:\s+(?:ASC|DESC))?)*",
+        test_order,
+        flags=re.IGNORECASE,
+    ):
+        errors.append(
+            "test_query_order_by must be a comma-separated field list with optional ASC or DESC"
+        )
     return errors
+
+
+def source_readiness_errors(row):
+    """Return reasons why one row cannot be enabled or explicitly tested.
+
+    Disabled rows are allowed to be incomplete drafts in the canonical CSV.
+    This helper is the single readiness gate used when enabling/running them.
+    """
+    normalized = _normalized_source_row(row)
+    errors = _row_configuration_errors(normalized)
+    if normalized["active"] != "Y":
+        errors.append("source is disabled by the founder-controlled active flag")
+    if normalized["operational_status"] not in RUNTIME_ELIGIBLE_STATUSES:
+        errors.append(f"operational_status={normalized['operational_status']}")
+    return errors
+
+
+def source_configuration_errors(row):
+    """Return structural/configuration errors without asserting run readiness."""
+    return tuple(_row_configuration_errors(_normalized_source_row(row)))
+
+
+def source_skip_reason(row):
+    errors = source_readiness_errors(row)
+    return "; ".join(errors)
+
+
+def source_is_runtime_eligible(row):
+    return not source_readiness_errors(row)
 
 
 def _validate_rows(rows, path):
@@ -155,23 +322,48 @@ def _validate_rows(rows, path):
             errors.append(f"{prefix}: active must be Y or N")
         if row["no_retry"] not in {"Y", "N"}:
             errors.append(f"{prefix}: no_retry must be Y or N")
-        if row["track"] in SOURCE_TRACKS and row["active"] == "Y":
-            errors.extend(f"{prefix}: {message}" for message in source_readiness_errors(row))
-        elif row["track"] == "tender":
-            # Drafts may be incomplete or may name a future custom adapter,
-            # but populated URLs must still be safe to retain in config.
-            for label, value in (("url", row["url"]), ("rss", row["rss"])):
-                if value and not _is_public_url(value):
-                    errors.append(f"{prefix}: draft {label} must be a public http(s) URL when supplied")
-            for variant in (part.strip() for part in row["url_variants"].split("|") if part.strip()):
-                if not _is_public_url(variant):
-                    errors.append(f"{prefix}: invalid draft url_variants entry '{variant}'")
-        elif row["track"] == "development":
-            # Several discovery adapters intentionally store an ArcGIS item
-            # id or ODS dataset slug here.  Enforce the network guard only
-            # when a disabled draft contains a URL.
-            if row["url"] and "://" in row["url"] and not _is_public_url(row["url"]):
-                errors.append(f"{prefix}: draft development url must be public when supplied")
+        if row["operational_status"] not in OPERATIONAL_STATUSES:
+            errors.append(
+                f"{prefix}: operational_status must be one of {', '.join(sorted(OPERATIONAL_STATUSES))}"
+            )
+        if row["last_test_type"] not in LAST_TEST_TYPES:
+            errors.append(
+                f"{prefix}: last_test_type must be one of {', '.join(sorted(LAST_TEST_TYPES - {''}))}"
+            )
+        try:
+            http_status = _safe_nonnegative_integer(row["last_http_status"], "last_http_status")
+            if http_status is not None and not 100 <= http_status <= 599:
+                errors.append(f"{prefix}: last_http_status must be between 100 and 599")
+            _safe_nonnegative_integer(row["last_candidate_count"], "last_candidate_count")
+            _safe_nonnegative_integer(row["last_normalized_count"], "last_normalized_count")
+        except ValueError as exc:
+            errors.append(f"{prefix}: {exc}")
+        if row["active"] == "Y":
+            errors.extend(f"{prefix}: {message}" for message in _row_configuration_errors(row))
+        else:
+            # Disabled drafts may be incomplete, but every populated URL still
+            # receives the no-network portion of the safety policy.
+            for label, value in _network_fields(row):
+                error = _url_field_error(label, value)
+                if error:
+                    errors.append(f"{prefix}: {error}")
+    endpoint_owner = {}
+    for row_number, row in enumerate(rows, start=2):
+        if row["active"] != "Y" or row["operational_status"] not in RUNTIME_ELIGIBLE_STATUSES:
+            continue
+        values = []
+        for label, value in _network_fields(row):
+            if value:
+                values.append((label, str(value).strip().casefold().rstrip("/")))
+        for label, value in values:
+            owner = endpoint_owner.get(value)
+            if owner and owner[0] != row["source_id"]:
+                errors.append(
+                    f"row {row_number}: duplicate runnable endpoint in {label}; "
+                    f"already used by source_id '{owner[0]}'"
+                )
+            else:
+                endpoint_owner[value] = (row["source_id"], label)
     if errors:
         raise SourceRegistryError(path, errors)
 
@@ -185,7 +377,7 @@ def load_source_rows(path=None, *, root=None, active_only=False, track=None):
         with resolved.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.DictReader(handle)
             headers = tuple(reader.fieldnames or ())
-            missing = [column for column in SOURCE_COLUMNS if column not in headers]
+            missing = [column for column in LEGACY_SOURCE_COLUMNS if column not in headers]
             if missing:
                 raise SourceRegistryError(resolved, [f"missing column(s): {', '.join(missing)}"])
             rows = [_normalized_source_row(row) for row in reader]
@@ -210,13 +402,14 @@ def load_tender_sources(path=None, *, root=None, active_only=True):
         source = dict(row)
         source["url_variants"] = [part.strip() for part in row["url_variants"].split("|") if part.strip()]
         source["no_retry"] = row["no_retry"] == "Y"
+        source["runtime_skip_reason"] = source_skip_reason(row)
         sources.append(source)
     return sources
 
 
 def load_development_connectors(path=None, *, root=None, active_only=True):
     return {
-        row["source_id"]: row
+        row["source_id"]: {**row, "runtime_skip_reason": source_skip_reason(row)}
         for row in load_source_rows(path, root=root, active_only=active_only, track="development")
     }
 
@@ -224,27 +417,70 @@ def load_development_connectors(path=None, *, root=None, active_only=True):
 def registry_summary(path=None, *, root=None):
     resolved = resolve_registry_path(path, root)
     rows = load_source_rows(resolved)
-    return {
+    counts = {
         "path": str(resolved),
         "total": len(rows),
-        "active": sum(row["active"] == "Y" for row in rows),
+        "enabled": sum(row["active"] == "Y" for row in rows),
         "tender": sum(row["track"] == "tender" for row in rows),
         "development": sum(row["track"] == "development" for row in rows),
+        "runtime_eligible": sum(source_is_runtime_eligible(row) for row in rows),
     }
+    counts["active"] = counts["enabled"]  # compatibility for older manifests/tests
+    for status in sorted(OPERATIONAL_STATUSES):
+        counts[status] = sum(row["operational_status"] == status for row in rows)
+    return counts
 
 
-def write_source_rows(rows, path=None, *, root=None):
+def source_registry_backup_root(*, root=None, create=True):
+    package_root = detect_package_root(Path(root).resolve() if root else None)
+    backup_root = user_settings_root(package_root=package_root, create=create) / "source_registry_backups"
+    if create:
+        backup_root.mkdir(parents=True, exist_ok=True)
+    return backup_root
+
+
+def _fieldnames_for_rows(rows):
+    fieldnames = list(SOURCE_COLUMNS)
+    for row in rows:
+        for key in row:
+            if key not in fieldnames and not str(key).startswith("_"):
+                fieldnames.append(key)
+    return fieldnames
+
+
+def _timestamped_backup(resolved, *, root=None, backup_root=None):
+    if not resolved.exists():
+        return None
+    destination_root = (
+        Path(backup_root).expanduser().resolve()
+        if backup_root is not None
+        else source_registry_backup_root(root=root, create=True)
+    )
+    destination_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
+    destination = destination_root / f"{resolved.stem}_{stamp}.csv.bak"
+    shutil.copy2(resolved, destination)
+    with destination.open("rb+") as handle:
+        os.fsync(handle.fileno())
+    return destination
+
+
+def write_source_rows(rows, path=None, *, root=None, backup_root=None):
     """Validate and atomically replace a registry edited by the desktop GUI."""
     resolved = resolve_registry_path(path, root)
     normalized = [_normalized_source_row(row) for row in rows]
     _validate_rows(normalized, resolved)
     resolved.parent.mkdir(parents=True, exist_ok=True)
-    temporary = resolved.with_suffix(resolved.suffix + ".tmp")
+    fieldnames = _fieldnames_for_rows(normalized)
+    temporary = resolved.with_name(f".{resolved.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("w", newline="", encoding="utf-8-sig") as handle:
-            writer = csv.DictWriter(handle, fieldnames=SOURCE_COLUMNS, extrasaction="ignore")
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows({column: row.get(column, "") for column in SOURCE_COLUMNS} for row in normalized)
+            writer.writerows({column: row.get(column, "") for column in fieldnames} for row in normalized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _timestamped_backup(resolved, root=root, backup_root=backup_root)
         os.replace(temporary, resolved)
     finally:
         if temporary.exists():
@@ -252,21 +488,25 @@ def write_source_rows(rows, path=None, *, root=None):
     return resolved
 
 
-def upsert_source(source, path=None, *, root=None):
+def upsert_source(source, path=None, *, root=None, backup_root=None):
     rows = load_source_rows(path, root=root)
+    supplied = {str(key) for key in dict(source or {}) if key is not None}
     incoming = _normalized_source_row(source)
     replaced = False
     for index, row in enumerate(rows):
         if row["source_id"] == incoming["source_id"]:
-            rows[index] = incoming
+            merged = dict(row)
+            for key in supplied:
+                merged[key] = incoming.get(key, "")
+            rows[index] = _normalized_source_row(merged)
             replaced = True
             break
     if not replaced:
         rows.append(incoming)
-    return write_source_rows(rows, path, root=root)
+    return write_source_rows(rows, path, root=root, backup_root=backup_root)
 
 
-def set_source_active(source_id, active, path=None, *, root=None):
+def set_source_active(source_id, active, path=None, *, root=None, backup_root=None):
     rows = load_source_rows(path, root=root)
     wanted = str(source_id).strip().casefold()
     found = False
@@ -277,7 +517,48 @@ def set_source_active(source_id, active, path=None, *, root=None):
             break
     if not found:
         raise SourceRegistryError(resolve_registry_path(path, root), [f"source_id '{source_id}' was not found"])
-    return write_source_rows(rows, path, root=root)
+    return write_source_rows(rows, path, root=root, backup_root=backup_root)
+
+
+def update_source_test_metadata(
+    source_id,
+    *,
+    operational_status=None,
+    test_type,
+    test_result,
+    http_status="",
+    error="",
+    candidate_count=0,
+    normalized_count=0,
+    last_good_endpoint=None,
+    tested_at=None,
+    path=None,
+    root=None,
+    backup_root=None,
+):
+    rows = load_source_rows(path, root=root)
+    wanted = str(source_id).strip().casefold()
+    found = False
+    for row in rows:
+        if row["source_id"] != wanted:
+            continue
+        found = True
+        if operational_status is not None:
+            row["operational_status"] = str(operational_status).strip().casefold()
+        row["last_tested_at"] = tested_at or datetime.now().astimezone().isoformat(timespec="seconds")
+        row["last_test_type"] = str(test_type).strip().casefold()
+        row["last_test_result"] = str(test_result or "").strip()
+        row["last_http_status"] = str(http_status or "").strip()
+        row["last_error"] = str(error or "").strip()[:1000]
+        row["last_candidate_count"] = str(int(candidate_count or 0))
+        row["last_normalized_count"] = str(int(normalized_count or 0))
+        row["last_probe_status"] = row["last_test_result"]
+        if last_good_endpoint is not None:
+            row["last_good_endpoint"] = str(last_good_endpoint or "").strip()
+        break
+    if not found:
+        raise SourceRegistryError(resolve_registry_path(path, root), [f"source_id '{source_id}' was not found"])
+    return write_source_rows(rows, path, root=root, backup_root=backup_root)
 
 # Compatibility-only map from historical Source_Register display names to
 # canonical source IDs. Runtime collection never reads this list.
@@ -520,7 +801,12 @@ def write_sync_report_csv(rows, path):
         w = csv.DictWriter(f, fieldnames=SYNC_COLUMNS)
         w.writeheader()
         for r in rows:
-            w.writerow({c: r.get(c, "") for c in SYNC_COLUMNS})
+            w.writerow(
+                {
+                    column: safe_untrusted_excel_value(r.get(column, ""))
+                    for column in SYNC_COLUMNS
+                }
+            )
 
 
 if __name__ == "__main__":

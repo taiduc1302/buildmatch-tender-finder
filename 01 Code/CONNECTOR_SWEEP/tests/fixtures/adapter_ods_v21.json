@@ -1,0 +1,11 @@
+{
+  "results": [
+    {
+      "permitnumber": "BP-2026-005",
+      "address": "500 Example Drive",
+      "typeofwork": "New construction with site servicing and road work",
+      "status": "Issued",
+      "applicant": "Example Builders"
+    }
+  ]
+}

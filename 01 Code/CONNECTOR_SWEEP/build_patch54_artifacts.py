@@ -12,6 +12,8 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from tenderfinder_excel_safety import append_untrusted_row, safe_untrusted_excel_value
+
 
 ROOT = Path(__file__).resolve().parents[2]
 LIVE_SRC = Path(r"C:\tenderfinder_out\patch5_4_live")
@@ -197,7 +199,13 @@ def write_csv(path: Path, rows: list[dict[str, object]], fields: list[str]) -> N
     with path.open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow(
+                {
+                    field: safe_untrusted_excel_value(row.get(field, ""))
+                    for field in fields
+                }
+            )
 
 
 def build_connector_matrix(summary_rows: list[dict[str, str]]) -> list[dict[str, object]]:
@@ -333,7 +341,7 @@ def add_rows(ws, rows: list[dict[str, object]], fields: list[str], max_width: in
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="D9EAF7")
     for row in rows:
-        ws.append([row.get(f, "") for f in fields])
+        append_untrusted_row(ws, [row.get(f, "") for f in fields])
     for col in range(1, len(fields) + 1):
         letter = get_column_letter(col)
         values = [str(ws.cell(r, col).value or "") for r in range(1, min(ws.max_row, 200) + 1)]

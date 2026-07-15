@@ -1,0 +1,23 @@
+{
+  "dataset": [
+    {
+      "title": "Development Applications",
+      "distribution": [
+        {
+          "accessURL": "https://services1.arcgis.com/example/arcgis/rest/services/Development_Applications/FeatureServer/0"
+        }
+      ]
+    }
+  ],
+  "features": [
+    {
+      "attributes": {
+        "APPLICATION_NO": "DP-2026-001",
+        "ADDRESS": "100 Example Avenue",
+        "DESCRIPTION": "Subdivision site servicing and road works",
+        "STATUS": "Under Review",
+        "APPLICANT": "Example Developments Ltd"
+      }
+    }
+  ]
+}

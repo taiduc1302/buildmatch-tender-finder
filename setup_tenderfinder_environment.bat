@@ -18,7 +18,7 @@ cd /d "%~dp0"
 set "ROOT=%~dp0"
 set "VENV_DIR=%ROOT%.venv"
 set "GUI_SCRIPT=%ROOT%01 Code\CONNECTOR_SWEEP\tenderfinder_launcher_gui.py"
-set "REQUIREMENTS=%ROOT%01 Code\CONNECTOR_SWEEP\requirements.txt"
+set "REQUIREMENTS=%ROOT%requirements.txt"
 
 echo ============================================================
 echo TENDER_FINDER Tender Intelligence - Environment Setup
@@ -27,30 +27,9 @@ echo.
 
 REM --- Step 1: find Python -----------------------------------
 echo [1/5] Checking for Python...
-set "PY_LAUNCHER="
-where python >nul 2>&1
-if %errorlevel%==0 (
-    set "PY_LAUNCHER=python"
-) else (
-    where py >nul 2>&1
-    if %errorlevel%==0 (
-        set "PY_LAUNCHER=py -3"
-    )
-)
-
-if "%PY_LAUNCHER%"=="" (
-    echo.
-    echo ERROR: Python was not found on this computer.
-    echo.
-    echo TENDER_FINDER needs Python 3.10 or newer. Download and install it from:
-    echo   https://www.python.org/downloads/
-    echo.
-    echo IMPORTANT: on the Python installer's first screen, check the box
-    echo that says "Add python.exe to PATH" before clicking Install.
-    echo.
-    echo After installing Python, run this setup script again.
-    echo ============================================================
-    pause
+call "%ROOT%_python_bootstrap.bat"
+if errorlevel 1 (
+    echo ERROR: Python 3.11 or newer is required; environment setup cannot continue.
     exit /b 1
 )
 echo   Found Python: %PY_LAUNCHER%
@@ -84,12 +63,16 @@ if not exist "%REQUIREMENTS%" (
     pause
     exit /b 1
 )
-"%VENV_PY%" -m pip install --upgrade pip >nul
+"%VENV_PY%" -m pip install --upgrade pip
+if errorlevel 1 (
+    echo.
+    echo ERROR: pip itself could not be prepared. Check internet/proxy access and retry setup.
+    exit /b 1
+)
 "%VENV_PY%" -m pip install -r "%REQUIREMENTS%"
 if errorlevel 1 (
     echo.
     echo ERROR: pip install failed. See the message above for details.
-    pause
     exit /b 1
 )
 echo   Packages installed.
@@ -103,11 +86,10 @@ echo   will skip it if it is already installed.
 "%VENV_PY%" -m playwright install chromium
 if errorlevel 1 (
     echo.
-    echo WARNING: Playwright browser install did not finish cleanly.
-    echo   The BC Bid connector needs this browser; other TENDER_FINDER features
-    echo   will still work. You can retry later with:
+    echo ERROR: Playwright Chromium installation failed.
+    echo   Live BC Bid testing requires this browser. Retry with:
     echo   "%VENV_PY%" -m playwright install chromium
-    echo.
+    exit /b 1
 )
 echo.
 
@@ -115,48 +97,40 @@ REM --- Step 5: create launchers ----------------------------------
 echo [5/5] Creating launchers...
 set "SHORTCUT_NAME=TENDER_FINDER Tender Intelligence"
 
-REM 5a. Always create a repo-root launcher. This does not depend on a
-REM Desktop folder existing (some managed/redirected profiles don't have
-REM one) so it is the one guaranteed-to-work double-click entry point.
+REM 5a. The checked-in repo-relative launcher is canonical. Setup must never
+REM rewrite it with machine-specific absolute paths.
 set "ROOT_LAUNCHER=%ROOT%Launch_TENDER_FINDER_GUI.bat"
-> "%ROOT_LAUNCHER%" echo @echo off
->> "%ROOT_LAUNCHER%" echo cd /d "%%~dp0"
->> "%ROOT_LAUNCHER%" echo start "" "%VENV_PYW%" "%GUI_SCRIPT%"
 if exist "%ROOT_LAUNCHER%" (
-    echo   Launcher created: "%ROOT_LAUNCHER%"
+    echo   Canonical launcher preserved: "%ROOT_LAUNCHER%"
 ) else (
-    echo   WARNING: could not write "%ROOT_LAUNCHER%".
+    echo ERROR: canonical launcher is missing:
+    echo   "%ROOT_LAUNCHER%"
+    exit /b 1
 )
 
-REM 5b. Best-effort Desktop .lnk shortcut via a small VBScript helper
-REM ^(cmd.exe cannot create .lnk files directly^). Not all environments
-REM have a Desktop folder ^(e.g. some redirected/managed profiles^), so
-REM this is allowed to fail - the repo-root launcher above always works.
-set "SHORTCUT_LNK=%USERPROFILE%\Desktop\%SHORTCUT_NAME%.lnk"
+REM 5b. Best-effort Desktop .lnk shortcut. Ask Windows for the real Desktop
+REM path because OneDrive and managed profiles may redirect it away from
+REM %%USERPROFILE%%\Desktop. Shortcut creation runs in a subroutine so cmd.exe
+REM never mis-parses PowerShell/VB-style parentheses inside this IF block.
+set "DESKTOP_DIR="
+for /f "usebackq delims=" %%D in (`powershell.exe -NoProfile -NonInteractive -Command "[Environment]::GetFolderPath('Desktop')" 2^>nul`) do set "DESKTOP_DIR=%%D"
+if not defined DESKTOP_DIR set "DESKTOP_DIR=%USERPROFILE%\Desktop"
+set "SHORTCUT_LNK=!DESKTOP_DIR!\%SHORTCUT_NAME%.lnk"
 set "DESKTOP_OK=0"
-if exist "%USERPROFILE%\Desktop" (
-    set "VBS_TEMP=%TEMP%\tenderfinder_make_shortcut_%RANDOM%.vbs"
-    > "!VBS_TEMP!" echo Set oWS = WScript.CreateObject("WScript.Shell")
-    >> "!VBS_TEMP!" echo sLinkFile = "%SHORTCUT_LNK%"
-    >> "!VBS_TEMP!" echo Set oLink = oWS.CreateShortcut(sLinkFile)
-    >> "!VBS_TEMP!" echo oLink.TargetPath = "%VENV_PYW%"
-    >> "!VBS_TEMP!" echo oLink.Arguments = """%GUI_SCRIPT%"""
-    >> "!VBS_TEMP!" echo oLink.WorkingDirectory = "%ROOT%"
-    >> "!VBS_TEMP!" echo oLink.IconLocation = "%VENV_PYW%"
-    >> "!VBS_TEMP!" echo oLink.Description = "Run the TENDER_FINDER tender/lead sweep"
-    >> "!VBS_TEMP!" echo oLink.Save
-    cscript //nologo "!VBS_TEMP!" >nul 2>&1
-    del "!VBS_TEMP!" >nul 2>&1
-
+if exist "!DESKTOP_DIR!\" (
+    set "TENDER_FINDER_SHORTCUT_LNK=!SHORTCUT_LNK!"
+    set "TENDER_FINDER_SHORTCUT_TARGET=%ROOT_LAUNCHER%"
+    set "TENDER_FINDER_SHORTCUT_WORKDIR=%ROOT%"
+    set "TENDER_FINDER_SHORTCUT_ICON=%VENV_PYW%"
+    call :CREATE_DESKTOP_SHORTCUT
     if exist "%SHORTCUT_LNK%" (
         echo   Desktop shortcut created: "%SHORTCUT_LNK%"
         set "DESKTOP_OK=1"
     ) else (
         echo   Could not create a .lnk shortcut - trying a .bat fallback instead.
-        set "SHORTCUT_BAT=%USERPROFILE%\Desktop\%SHORTCUT_NAME%.bat"
+        set "SHORTCUT_BAT=!DESKTOP_DIR!\%SHORTCUT_NAME%.bat"
         > "!SHORTCUT_BAT!" echo @echo off
-        >> "!SHORTCUT_BAT!" echo cd /d "%ROOT%"
-        >> "!SHORTCUT_BAT!" echo start "" "%VENV_PYW%" "%GUI_SCRIPT%"
+        >> "!SHORTCUT_BAT!" echo call "%ROOT_LAUNCHER%"
         if exist "!SHORTCUT_BAT!" (
             echo   Desktop fallback shortcut created: "!SHORTCUT_BAT!"
             set "DESKTOP_OK=1"
@@ -165,7 +139,7 @@ if exist "%USERPROFILE%\Desktop" (
         )
     )
 ) else (
-    echo   No Desktop folder found for this profile - skipping the Desktop shortcut.
+    echo   No usable Desktop folder found for this profile - skipping the Desktop shortcut.
 )
 echo.
 
@@ -179,5 +153,8 @@ if "%DESKTOP_OK%"=="1" (
     echo   %ROOT_LAUNCHER%
 )
 echo ============================================================
-pause
+exit /b 0
+
+:CREATE_DESKTOP_SHORTCUT
+powershell.exe -NoProfile -NonInteractive -Command "$ws=New-Object -ComObject WScript.Shell; $link=$ws.CreateShortcut($env:TENDER_FINDER_SHORTCUT_LNK); $link.TargetPath=$env:TENDER_FINDER_SHORTCUT_TARGET; $link.Arguments=''; $link.WorkingDirectory=$env:TENDER_FINDER_SHORTCUT_WORKDIR; $link.IconLocation=$env:TENDER_FINDER_SHORTCUT_ICON; $link.Description='Run the TENDER_FINDER tender/lead sweep'; $link.Save()" >nul 2>&1
 exit /b 0

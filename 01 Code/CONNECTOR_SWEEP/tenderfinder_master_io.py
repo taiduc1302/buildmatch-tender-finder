@@ -35,6 +35,7 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 import tenderfinder_guards as G
+from tenderfinder_excel_safety import append_untrusted_row, set_untrusted_cell
 
 # --- Future_Projects column map (1-indexed) --------------------------------
 FP = {
@@ -373,27 +374,19 @@ class MasterIO:
         # write rows
         for i, d in enumerate(rows):
             r = 2 + i
-            ws.cell(r, FP["project_id"]).value = d.get("project_id")
-            ws.cell(r, FP["date_found"]).value = d.get("date_found") or TODAY
-            ws.cell(r, FP["source"]).value = d.get("source")
-            ws.cell(r, FP["source_url"]).value = d.get("source_url")
-            ws.cell(r, FP["title"]).value = d.get("title")
-            ws.cell(r, FP["owner"]).value = d.get("owner")
-            ws.cell(r, FP["municipality"]).value = d.get("municipality")
-            ws.cell(r, FP["app_no"]).value = d.get("app_no")
-            ws.cell(r, FP["app_type_stage"]).value = d.get("app_type_stage")
-            ws.cell(r, FP["scope_summary"]).value = d.get("scope_summary")
-            ws.cell(r, FP["expected_civil"]).value = d.get("expected_civil")
-            ws.cell(r, FP["fit_score"]).value = d.get("fit_score")
+            for key in (
+                "project_id", "date_found", "source", "source_url", "title", "owner",
+                "municipality", "app_no", "app_type_stage", "scope_summary",
+                "expected_civil", "fit_score", "verification", "horizon", "est_value",
+                "next_milestone", "linked_active", "assigned_to", "notes", "last_updated",
+            ):
+                value = d.get(key)
+                if key in {"date_found", "last_updated"}:
+                    value = value or TODAY
+                elif key == "verification":
+                    value = value or "Needs Review"
+                set_untrusted_cell(ws.cell(r, FP[key]), value)
             ws.cell(r, FP["fit_class"]).value = FP_FIT_CLASS_FORMULA.format(r=r)
-            ws.cell(r, FP["verification"]).value = d.get("verification") or "Needs Review"
-            ws.cell(r, FP["horizon"]).value = d.get("horizon")
-            ws.cell(r, FP["est_value"]).value = d.get("est_value")
-            ws.cell(r, FP["next_milestone"]).value = d.get("next_milestone")
-            ws.cell(r, FP["linked_active"]).value = d.get("linked_active")
-            ws.cell(r, FP["assigned_to"]).value = d.get("assigned_to")
-            ws.cell(r, FP["notes"]).value = d.get("notes")
-            ws.cell(r, FP["last_updated"]).value = d.get("last_updated") or TODAY
         # ensure formula present in any remaining template rows up to 201
         last_data = 1 + len(rows)
         for r in range(max(2, last_data + 1), 202):
@@ -425,26 +418,20 @@ class MasterIO:
             if dry_run:
                 appended += 1
                 continue
-            ws.cell(r, AT["project_id"]).value = t.get("project_id")
-            ws.cell(r, AT["date_found"]).value = t.get("date_found") or TODAY
-            ws.cell(r, AT["source"]).value = t.get("source")
-            ws.cell(r, AT["source_url"]).value = t.get("source_url")
-            ws.cell(r, AT["title"]).value = t.get("title")
-            ws.cell(r, AT["owner"]).value = t.get("owner")
-            ws.cell(r, AT["gc"]).value = t.get("gc")
-            ws.cell(r, AT["municipality"]).value = t.get("municipality")
-            ws.cell(r, AT["scope_summary"]).value = t.get("scope_summary")
-            ws.cell(r, AT["scope_match"]).value = t.get("scope_match")
-            ws.cell(r, AT["fit_score"]).value = t.get("fit_score")
+            for key in (
+                "project_id", "date_found", "source", "source_url", "title", "owner", "gc",
+                "municipality", "scope_summary", "scope_match", "fit_score", "verification",
+                "closing_date", "est_value", "assigned_to", "bid_decision", "notes",
+            ):
+                value = t.get(key)
+                if key == "date_found":
+                    value = value or TODAY
+                elif key == "verification":
+                    value = value or "Needs Review"
+                set_untrusted_cell(ws.cell(r, AT[key]), value)
             ws.cell(r, AT["fit_class"]).value = AT_FIT_CLASS_FORMULA.format(r=r)
-            ws.cell(r, AT["verification"]).value = t.get("verification") or "Needs Review"
-            ws.cell(r, AT["closing_date"]).value = t.get("closing_date")
             ws.cell(r, AT["days_to_close"]).value = AT_DAYS_FORMULA.format(r=r)
-            ws.cell(r, AT["est_value"]).value = t.get("est_value")
-            ws.cell(r, AT["assigned_to"]).value = t.get("assigned_to")
-            ws.cell(r, AT["bid_decision"]).value = t.get("bid_decision")
-            ws.cell(r, AT["notes"]).value = t.get("notes")
-            ws.cell(r, AT["last_updated"]).value = TODAY
+            set_untrusted_cell(ws.cell(r, AT["last_updated"]), TODAY)
             appended += 1
         return {"appended": appended, "dry_run": dry_run}
 
@@ -459,18 +446,22 @@ class MasterIO:
             if dry_run:
                 appended += 1
                 continue
-            ws.cell(r, RA["project_id"]).value = it.get("project_id") or it.get("source_id")
-            ws.cell(r, RA["date_found"]).value = it.get("date_found") or TODAY
-            ws.cell(r, RA["date_rejected"]).value = TODAY
-            ws.cell(r, RA["source"]).value = it.get("source")
-            ws.cell(r, RA["source_url"]).value = it.get("source_url")
-            ws.cell(r, RA["title"]).value = it.get("title")
-            ws.cell(r, RA["municipality"]).value = it.get("municipality")
-            ws.cell(r, RA["scope_summary"]).value = it.get("scope_summary")
-            ws.cell(r, RA["fit_score"]).value = it.get("fit_score")
-            ws.cell(r, RA["reason"]).value = it.get("reason")
-            ws.cell(r, RA["verification"]).value = it.get("verification") or "Rejected"
-            ws.cell(r, RA["notes"]).value = it.get("notes")
+            values = {
+                "project_id": it.get("project_id") or it.get("source_id"),
+                "date_found": it.get("date_found") or TODAY,
+                "date_rejected": TODAY,
+                "source": it.get("source"),
+                "source_url": it.get("source_url"),
+                "title": it.get("title"),
+                "municipality": it.get("municipality"),
+                "scope_summary": it.get("scope_summary"),
+                "fit_score": it.get("fit_score"),
+                "reason": it.get("reason"),
+                "verification": it.get("verification") or "Rejected",
+                "notes": it.get("notes"),
+            }
+            for key, value in values.items():
+                set_untrusted_cell(ws.cell(r, RA[key]), value)
             appended += 1
         return {"appended": appended, "dry_run": dry_run}
 
@@ -486,16 +477,16 @@ class MasterIO:
             cell = ws.cell(r, 2).value
             if cell and sm and sm in str(cell).lower():
                 if status is not None:
-                    ws.cell(r, 10).value = status     # Status col
+                    set_untrusted_cell(ws.cell(r, 10), status)     # Status col
                 if notes is not None:
-                    ws.cell(r, 11).value = notes       # Notes col
+                    set_untrusted_cell(ws.cell(r, 11), notes)       # Notes col
                 return True
         return False
 
     def append_run_log(self, entries):
         ws = self.wb["Run_Log"]
         for e in entries:
-            ws.append([
+            append_untrusted_row(ws, [
                 e.get("run_date") or TODAY, e.get("source_id"),
                 e.get("source_name"), e.get("fetch_type"),
                 e.get("resolved_endpoint"), e.get("records_pulled"),
@@ -522,7 +513,7 @@ class MasterIO:
             r = existing.get(sid) or (ws.max_row + 1)
             for i, key in enumerate(cols, start=1):
                 if d.get(key) is not None:
-                    ws.cell(r, i).value = d.get(key)
+                    set_untrusted_cell(ws.cell(r, i), d.get(key))
 
     # -----------------------------------------------------------------------
     def save(self):

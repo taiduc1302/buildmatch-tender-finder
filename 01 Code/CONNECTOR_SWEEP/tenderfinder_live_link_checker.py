@@ -91,6 +91,13 @@ except ImportError as _e:
         "Run: pip install requests pandas openpyxl urllib3"
     )
 
+from tenderfinder_url_safety import (
+    URLSafetyError,
+    safe_requests_request,
+    validate_public_url_syntax,
+)
+from tenderfinder_excel_safety import safe_untrusted_excel_value
+
 
 # Local secret/env loader.
 # Loads non-committed local env files without adding a python-dotenv dependency.
@@ -527,7 +534,9 @@ def _make_session(verify_ssl: bool = True) -> requests.Session:
     adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=20)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
-    session.verify = verify_ssl
+    # Certificate verification is mandatory.  The compatibility parameter is
+    # retained for old callers but can no longer disable TLS verification.
+    session.verify = True
     return session
 
 
@@ -557,25 +566,17 @@ def check_url(
         "error_type": "",
         "error_message": "",
         "method_used": "",
-        "ssl_verified": verify_ssl,
+        "ssl_verified": True,
         "retry_count": 0,          # number of *extra* attempts made beyond the first
     }
 
     # -- Guard: syntactically invalid / unparseable URL ----------------------
     # Never let a bad string reach requests and raise an opaque error.
     try:
-        _parsed = urlparse(url)
-        if not _parsed.scheme or not _parsed.netloc:
-            result["error_type"] = "INVALID_URL"
-            result["error_message"] = f"Missing scheme or host in URL: {url!r}"
-            return result
-        if _parsed.scheme not in ("http", "https"):
-            result["error_type"] = "INVALID_URL"
-            result["error_message"] = f"Unsupported URL scheme: {_parsed.scheme!r}"
-            return result
-    except Exception as exc:                                # pragma: no cover
-        result["error_type"] = "INVALID_URL"
-        result["error_message"] = f"Unparseable URL: {exc}"
+        validate_public_url_syntax(url)
+    except URLSafetyError as exc:
+        result["error_type"] = "UNSAFE_URL"
+        result["error_message"] = str(exc)[:350]
         return result
 
     headers = BROWSER_HEADERS_POOL[headers_idx % len(BROWSER_HEADERS_POOL)]
@@ -604,20 +605,21 @@ def check_url(
 
         for method in method_order:
             try:
-                resp = session.request(
+                fetched = safe_requests_request(
                     method,
                     url,
+                    request_callable=session.request,
                     headers=headers,
                     timeout=(min(timeout // 2, 10), timeout),  # (connect, read)
-                    allow_redirects=True,
                     stream=(method == "GET"),
                 )
+                resp = fetched.response
                 elapsed = round(time.time() - t0, 3)
 
                 result["response_time_seconds"] = elapsed
                 result["http_status_code"] = resp.status_code
-                result["final_url_after_redirect"] = str(resp.url)
-                result["redirect_chain"] = [str(r.url) for r in resp.history]
+                result["final_url_after_redirect"] = fetched.final_url
+                result["redirect_chain"] = list(fetched.redirect_chain[:-1])
                 result["content_type"] = resp.headers.get("Content-Type", "")
                 result["method_used"] = method
 
@@ -637,13 +639,13 @@ def check_url(
 
             except SSLError as exc:
                 result["response_time_seconds"] = round(time.time() - t0, 3)
-                if verify_ssl and not _retry_no_ssl:
-                    log.debug(f"SSL error for {url}; retrying without verification")
-                    return check_url(
-                        url, timeout, 0, headers_idx,
-                        verify_ssl=False, _retry_no_ssl=True,
-                    )
                 result["error_type"] = "BROKEN_SSL"
+                result["error_message"] = str(exc)[:350]
+                return result
+
+            except URLSafetyError as exc:
+                result["response_time_seconds"] = round(time.time() - t0, 3)
+                result["error_type"] = "UNSAFE_URL"
                 result["error_message"] = str(exc)[:350]
                 return result
 
@@ -1103,45 +1105,53 @@ def _raise_for_search_response(provider: str, resp: requests.Response) -> None:
 
 
 def _search_bing(query: str, api_key: str, n: int = 5) -> List[Dict]:
-    resp = requests.get(
+    resp = safe_requests_request(
+        "GET",
         "https://api.bing.microsoft.com/v7.0/search",
+        request_callable=requests.request,
         headers={"Ocp-Apim-Subscription-Key": api_key},
         params={"q": query, "count": n, "mkt": "en-CA"},
         timeout=15,
-    )
+    ).response
     _raise_for_search_response("bing", resp)
     items = resp.json().get("webPages", {}).get("value", [])
     return [{"url": i["url"], "title": i.get("name", ""), "snippet": i.get("snippet", "")} for i in items]
 
 
 def _search_serpapi(query: str, api_key: str, n: int = 5) -> List[Dict]:
-    resp = requests.get(
+    resp = safe_requests_request(
+        "GET",
         "https://serpapi.com/search",
+        request_callable=requests.request,
         params={"q": query, "api_key": api_key, "num": n, "gl": "ca"},
         timeout=15,
-    )
+    ).response
     _raise_for_search_response("serpapi", resp)
     items = resp.json().get("organic_results", [])
     return [{"url": i.get("link", ""), "title": i.get("title", ""), "snippet": i.get("snippet", "")} for i in items]
 
 
 def _search_tavily(query: str, api_key: str, n: int = 5) -> List[Dict]:
-    resp = requests.post(
+    resp = safe_requests_request(
+        "POST",
         "https://api.tavily.com/search",
+        request_callable=requests.request,
         json={"api_key": api_key, "query": query, "max_results": n},
         timeout=15,
-    )
+    ).response
     _raise_for_search_response("tavily", resp)
     items = resp.json().get("results", [])
     return [{"url": i.get("url", ""), "title": i.get("title", ""), "snippet": i.get("content", "")} for i in items]
 
 
 def _search_google(query: str, api_key: str, cse_id: str, n: int = 5) -> List[Dict]:
-    resp = requests.get(
+    resp = safe_requests_request(
+        "GET",
         "https://www.googleapis.com/customsearch/v1",
+        request_callable=requests.request,
         params={"key": api_key, "cx": cse_id, "q": query, "num": min(n, 10), "gl": "ca"},
         timeout=15,
-    )
+    ).response
     _raise_for_search_response("google", resp)
     items = resp.json().get("items", [])
     return [{"url": i.get("link", ""), "title": i.get("title", ""), "snippet": i.get("snippet", "")} for i in items]
@@ -2038,9 +2048,19 @@ def _safe_atomic_write(path: Path, writer_fn, label: str) -> Path:
             log.debug(f"Could not remove temp output file {tmp_path}: {cleanup_exc}")
 
 
+def _spreadsheet_safe_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy safe to open in Excel, including CSV exports."""
+    safe_df = df.copy()
+    for column in safe_df.columns:
+        safe_df[column] = safe_df[column].map(safe_untrusted_excel_value)
+    return safe_df
+
+
 def _save_csv(df: pd.DataFrame, path: Path) -> Path:
     def _writer(target: Path) -> None:
-        df.to_csv(target, index=False, encoding="utf-8-sig")
+        _spreadsheet_safe_dataframe(df).to_csv(
+            target, index=False, encoding="utf-8-sig"
+        )
     final_path = _safe_atomic_write(path, _writer, "CSV")
     log.info(f"            rows={len(df)}")
     return final_path
@@ -2049,7 +2069,9 @@ def _save_csv(df: pd.DataFrame, path: Path) -> Path:
 def _save_xlsx(df: pd.DataFrame, path: Path, sheet_name: str = "Sheet1") -> Path:
     def _writer(target: Path) -> None:
         with pd.ExcelWriter(target, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name=sheet_name)
+            _spreadsheet_safe_dataframe(df).to_excel(
+                writer, index=False, sheet_name=sheet_name
+            )
     final_path = _safe_atomic_write(path, _writer, "XLSX")
     log.info(f"            rows={len(df)}")
     return final_path

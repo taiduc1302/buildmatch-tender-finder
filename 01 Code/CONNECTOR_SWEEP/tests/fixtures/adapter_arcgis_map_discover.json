@@ -1,0 +1,19 @@
+{
+  "layers": [
+    {
+      "id": 2,
+      "name": "Current Development Applications"
+    }
+  ],
+  "features": [
+    {
+      "attributes": {
+        "APPLICATION_NO": "DP-2026-003",
+        "ADDRESS": "300 Example Road",
+        "DESCRIPTION": "Industrial development with watermain extension",
+        "STATUS": "Approved",
+        "APPLICANT": "Example Industrial LP"
+      }
+    }
+  ]
+}

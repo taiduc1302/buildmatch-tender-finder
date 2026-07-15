@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+import json
+import shutil
+import uuid
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -26,10 +29,20 @@ from tenderfinder_package_paths import (
     keywords_config_path,
     keywords_template_path,
 )
-from tenderfinder_runtime import STATE_ROOT_ENV_VAR, default_output_root, runtime_paths
+from tenderfinder_runtime import (
+    atomic_write_json,
+    runtime_paths,
+    sha256_file,
+    timestamp_now,
+    user_settings_root,
+)
 
 
 CONFIG_ENV_VAR = "TENDER_FINDER_KEYWORDS_CONFIG"
+KEYWORDS_STATE_ROOT_ENV_VAR = "TENDER_FINDER_KEYWORDS_STATE_ROOT"
+VALIDATION_REPORT_FILENAME = "keywords_validation_last.txt"
+LKG_WORKBOOK_FILENAME = "keywords_last_known_good.xlsx"
+LKG_METADATA_FILENAME = "keywords_last_known_good.json"
 PROFILE_SHEET = "Company_Profile"
 KEYWORDS_SHEET = "Keywords"
 INSTRUCTIONS_SHEET = "Instructions"
@@ -169,10 +182,30 @@ class KeywordConfig:
     work_types: tuple[str, ...]
     known_clients: tuple[str, ...]
     rules: tuple[KeywordRule, ...]
+    requested_path: Path | None = None
+    source_kind: str = "canonical"
+    loaded_at: str = ""
+    last_validation_at: str = ""
+    validation_errors: tuple[str, ...] = ()
+    last_known_good_path: Path | None = None
+    last_known_good_status: str = "not_managed"
+    last_known_good_saved_at: str = ""
 
     @property
     def active_keyword_count(self) -> int:
         return sum(1 for rule in self.rules if rule.active)
+
+    @property
+    def inactive_keyword_count(self) -> int:
+        return sum(1 for rule in self.rules if not rule.active)
+
+    @property
+    def category_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for rule in self.rules:
+            if rule.active:
+                counts[rule.category] = counts.get(rule.category, 0) + 1
+        return dict(sorted(counts.items()))
 
     def rules_for(self, category: str) -> tuple[KeywordRule, ...]:
         return tuple(rule for rule in self.rules if rule.active and rule.category == category)
@@ -196,7 +229,15 @@ class KeywordConfig:
         return tuple(rule for rule in self.rules_for("gate_exclude") if rule.param == mode)
 
 
-_CACHE: dict[Path, KeywordConfig] = {}
+@dataclass(frozen=True)
+class KeywordStatePaths:
+    settings: Path
+    validation_report: Path
+    last_known_good_workbook: Path
+    last_known_good_metadata: Path
+
+
+_CACHE: dict[tuple[Path, Path, bool], KeywordConfig] = {}
 
 
 def clear_keywords_cache() -> None:
@@ -211,6 +252,43 @@ def resolve_keywords_path(path: str | Path | None = None, root: str | Path | Non
         return Path(override).expanduser().resolve()
     package_root = detect_package_root(Path(root).resolve() if root is not None else None)
     return keywords_config_path(package_root).resolve()
+
+
+def keyword_state_paths(
+    *,
+    root: str | Path | None = None,
+    state_root: str | Path | None = None,
+    create: bool = False,
+) -> KeywordStatePaths:
+    """Return external keyword validation/LKG paths for one state context."""
+    package_root = detect_package_root(Path(root).resolve() if root is not None else None)
+    selected = str(
+        state_root
+        or os.environ.get(KEYWORDS_STATE_ROOT_ENV_VAR, "").strip()
+    ).strip()
+    if selected:
+        settings = runtime_paths(
+            selected,
+            mode="keywords",
+            package_root=package_root,
+            create=create,
+        ).settings
+    else:
+        settings = user_settings_root(package_root=package_root, create=create)
+    return KeywordStatePaths(
+        settings=settings,
+        validation_report=settings / VALIDATION_REPORT_FILENAME,
+        last_known_good_workbook=settings / LKG_WORKBOOK_FILENAME,
+        last_known_good_metadata=settings / LKG_METADATA_FILENAME,
+    )
+
+
+def keyword_validation_report_path(
+    *,
+    root: str | Path | None = None,
+    state_root: str | Path | None = None,
+) -> Path:
+    return keyword_state_paths(root=root, state_root=state_root).validation_report
 
 
 def _normalized_header(value: Any) -> str:
@@ -298,21 +376,19 @@ def _validate_regex(keyword: str, row_number: int, errors: list[str]) -> None:
         )
 
 
-def _validation_report_path(path: Path) -> Path:
-    package_root = detect_package_root(path.parent)
-    default_path = keywords_config_path(package_root).resolve()
-    if path.resolve() == default_path:
-        selected_state = os.environ.get(STATE_ROOT_ENV_VAR, "").strip() or str(default_output_root() / "state")
-        return runtime_paths(
-            selected_state,
-            mode=os.environ.get("TENDER_FINDER_RUN_MODE", "config"),
-            package_root=package_root,
-        ).settings / "keywords_validation_last.txt"
-    return path.parent / "keywords_validation_last.txt"
-
-
-def _write_report(path: Path, status: str, lines: Iterable[str]) -> None:
-    report = _validation_report_path(path)
+def _write_report(
+    path: Path,
+    status: str,
+    lines: Iterable[str],
+    *,
+    package_root: Path,
+    state_root: str | Path | None,
+) -> None:
+    report = keyword_state_paths(
+        root=package_root,
+        state_root=state_root,
+        create=True,
+    ).validation_report
     try:
         report.parent.mkdir(parents=True, exist_ok=True)
         content = [
@@ -331,18 +407,46 @@ def _write_report(path: Path, status: str, lines: Iterable[str]) -> None:
         pass
 
 
-def _raise_invalid(path: Path, errors: list[str]) -> None:
-    _write_report(path, "INVALID", (f"- {error}" for error in errors))
+def _raise_invalid(
+    path: Path,
+    errors: list[str],
+    *,
+    package_root: Path,
+    state_root: str | Path | None,
+) -> None:
+    _write_report(
+        path,
+        "INVALID",
+        (f"- {error}" for error in errors),
+        package_root=package_root,
+        state_root=state_root,
+    )
     raise KeywordConfigError(path, errors)
 
 
-def _load_uncached(path: Path, *, allow_empty_profile: bool = False) -> KeywordConfig:
+def _load_uncached(
+    path: Path,
+    *,
+    package_root: Path,
+    state_root: str | Path | None,
+    allow_empty_profile: bool = False,
+) -> KeywordConfig:
     if not path.exists():
-        _raise_invalid(path, ["Workbook is missing."])
+        _raise_invalid(
+            path,
+            ["Workbook is missing."],
+            package_root=package_root,
+            state_root=state_root,
+        )
     try:
         wb = load_workbook(path, read_only=True, data_only=False)
     except Exception as exc:
-        _raise_invalid(path, [f"Workbook could not be opened: {exc}"])
+        _raise_invalid(
+            path,
+            [f"Workbook could not be opened: {exc}"],
+            package_root=package_root,
+            state_root=state_root,
+        )
 
     errors: list[str] = []
     missing_sheets = [sheet for sheet in REQUIRED_SHEETS if sheet not in wb.sheetnames]
@@ -453,7 +557,12 @@ def _load_uncached(path: Path, *, allow_empty_profile: bool = False) -> KeywordC
 
     if errors:
         wb.close()
-        _raise_invalid(path, errors)
+        _raise_invalid(
+            path,
+            errors,
+            package_root=package_root,
+            state_root=state_root,
+        )
 
     # Explicit Keywords rows win over Profile-generated defaults with the
     # same normalized (keyword, category) key.
@@ -485,8 +594,96 @@ def _load_uncached(path: Path, *, allow_empty_profile: bool = False) -> KeywordC
             f"Work types: {len(config.work_types)}",
             f"Known clients: {len(config.known_clients)}",
         ),
+        package_root=package_root,
+        state_root=state_root,
     )
     return config
+
+
+def _atomic_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with source.open("rb") as source_handle, temporary.open("wb") as target_handle:
+            shutil.copyfileobj(source_handle, target_handle)
+            target_handle.flush()
+            os.fsync(target_handle.fileno())
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _save_last_known_good(
+    canonical_path: Path,
+    config: KeywordConfig,
+    state_paths: KeywordStatePaths,
+) -> str:
+    saved_at = timestamp_now()
+    _atomic_copy(canonical_path, state_paths.last_known_good_workbook)
+    snapshot_hash = sha256_file(state_paths.last_known_good_workbook)
+    atomic_write_json(
+        state_paths.last_known_good_metadata,
+        {
+            "schema_version": 1,
+            "canonical_path": str(canonical_path),
+            "canonical_sha256": sha256_file(canonical_path),
+            "snapshot_path": str(state_paths.last_known_good_workbook),
+            "snapshot_sha256": snapshot_hash,
+            "saved_at": saved_at,
+            "company_name": config.company_name,
+            "active_keyword_count": config.active_keyword_count,
+            "inactive_keyword_count": config.inactive_keyword_count,
+            "category_counts": config.category_counts,
+        },
+    )
+    return saved_at
+
+
+def _validated_last_known_good(
+    requested_path: Path,
+    state_paths: KeywordStatePaths,
+) -> tuple[Path | None, dict[str, Any], str]:
+    workbook = state_paths.last_known_good_workbook
+    metadata_path = state_paths.last_known_good_metadata
+    if not workbook.exists() or not metadata_path.exists():
+        return None, {}, "no validated snapshot has been saved"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata is not an object")
+        recorded_canonical = Path(str(metadata.get("canonical_path", ""))).resolve()
+        if recorded_canonical != requested_path.resolve():
+            raise ValueError("snapshot belongs to a different canonical workbook")
+        recorded_snapshot = Path(str(metadata.get("snapshot_path", ""))).resolve()
+        if recorded_snapshot != workbook.resolve():
+            raise ValueError("snapshot path does not match keyword state")
+        recorded_hash = str(metadata.get("snapshot_sha256", "")).strip().lower()
+        actual_hash = sha256_file(workbook).lower()
+        if not recorded_hash or actual_hash != recorded_hash:
+            raise ValueError("snapshot SHA-256 does not match metadata")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return None, {}, f"snapshot metadata/checksum is invalid: {exc}"
+    return workbook, metadata, "ready"
+
+
+def inspect_last_known_good(
+    path: str | Path | None = None,
+    *,
+    root: str | Path | None = None,
+    state_root: str | Path | None = None,
+) -> dict[str, Any]:
+    package_root = detect_package_root(Path(root).resolve() if root is not None else None)
+    requested = resolve_keywords_path(path, package_root)
+    paths = keyword_state_paths(root=package_root, state_root=state_root)
+    workbook, metadata, detail = _validated_last_known_good(requested, paths)
+    return {
+        "status": "ready" if workbook else "unavailable",
+        "detail": detail,
+        "path": str(workbook or paths.last_known_good_workbook),
+        "saved_at": str(metadata.get("saved_at", "")),
+        "sha256": str(metadata.get("snapshot_sha256", "")),
+    }
 
 
 def load_keywords_config(
@@ -495,23 +692,154 @@ def load_keywords_config(
     root: str | Path | None = None,
     force_reload: bool = False,
     allow_empty_profile: bool = False,
+    allow_last_known_good: bool | None = None,
+    state_root: str | Path | None = None,
 ) -> KeywordConfig:
-    resolved = resolve_keywords_path(path, root)
+    package_root = detect_package_root(Path(root).resolve() if root is not None else None)
+    resolved = resolve_keywords_path(path, package_root)
+    managed_canonical = resolved == keywords_config_path(package_root).resolve()
+    lkg_enabled = (
+        managed_canonical
+        if allow_last_known_good is None
+        else bool(allow_last_known_good)
+    ) and not allow_empty_profile
+    state_paths = keyword_state_paths(
+        root=package_root,
+        state_root=state_root,
+        create=lkg_enabled,
+    )
+    cache_key = (resolved, state_paths.settings.resolve(), lkg_enabled)
     if force_reload:
-        _CACHE.pop(resolved, None)
-    cached = _CACHE.get(resolved)
+        _CACHE.pop(cache_key, None)
+    cached = _CACHE.get(cache_key)
     if not allow_empty_profile and not force_reload and cached:
         return cached
-    config = _load_uncached(resolved, allow_empty_profile=allow_empty_profile)
+
+    checked_at = timestamp_now()
+    try:
+        config = _load_uncached(
+            resolved,
+            package_root=package_root,
+            state_root=state_root,
+            allow_empty_profile=allow_empty_profile,
+        )
+    except KeywordConfigError as canonical_error:
+        if not lkg_enabled:
+            raise
+        snapshot, metadata, lkg_detail = _validated_last_known_good(
+            resolved,
+            state_paths,
+        )
+        if snapshot is None:
+            combined = [
+                *canonical_error.errors,
+                f"Last-known-good fallback unavailable: {lkg_detail}.",
+            ]
+            _write_report(
+                resolved,
+                "INVALID_NO_FALLBACK",
+                (f"- {error}" for error in combined),
+                package_root=package_root,
+                state_root=state_root,
+            )
+            raise KeywordConfigError(resolved, combined) from canonical_error
+        try:
+            fallback = _load_uncached(
+                snapshot,
+                package_root=package_root,
+                state_root=state_root,
+                allow_empty_profile=False,
+            )
+        except KeywordConfigError as fallback_error:
+            combined = [
+                *canonical_error.errors,
+                *(
+                    f"Last-known-good snapshot: {error}"
+                    for error in fallback_error.errors
+                ),
+            ]
+            _write_report(
+                resolved,
+                "INVALID_FALLBACK_REJECTED",
+                (f"- {error}" for error in combined),
+                package_root=package_root,
+                state_root=state_root,
+            )
+            raise KeywordConfigError(resolved, combined) from fallback_error
+        config = replace(
+            fallback,
+            requested_path=resolved,
+            source_kind="last_known_good",
+            loaded_at=checked_at,
+            last_validation_at=checked_at,
+            validation_errors=canonical_error.errors,
+            last_known_good_path=snapshot,
+            last_known_good_status="in_use",
+            last_known_good_saved_at=str(metadata.get("saved_at", "")),
+        )
+        _write_report(
+            resolved,
+            "FALLBACK_LAST_KNOWN_GOOD",
+            (
+                f"Effective workbook: {snapshot}",
+                f"Snapshot saved: {config.last_known_good_saved_at or '(unknown)'}",
+                *(f"Canonical error: {error}" for error in canonical_error.errors),
+            ),
+            package_root=package_root,
+            state_root=state_root,
+        )
+        _CACHE[cache_key] = config
+        return config
+
+    config = replace(
+        config,
+        requested_path=resolved,
+        source_kind="canonical",
+        loaded_at=checked_at,
+        last_validation_at=checked_at,
+    )
+    if lkg_enabled:
+        try:
+            saved_at = _save_last_known_good(resolved, config, state_paths)
+            config = replace(
+                config,
+                last_known_good_path=state_paths.last_known_good_workbook,
+                last_known_good_status="ready",
+                last_known_good_saved_at=saved_at,
+            )
+        except OSError as exc:
+            config = replace(
+                config,
+                last_known_good_path=state_paths.last_known_good_workbook,
+                last_known_good_status=f"snapshot_write_failed: {exc}",
+            )
+        _write_report(
+            resolved,
+            "VALID_CANONICAL",
+            (
+                f"Effective workbook: {resolved}",
+                f"Active keyword rules: {config.active_keyword_count}",
+                f"Inactive keyword rules: {config.inactive_keyword_count}",
+                f"Last-known-good status: {config.last_known_good_status}",
+                f"Last-known-good saved: {config.last_known_good_saved_at or '(not saved)'}",
+            ),
+            package_root=package_root,
+            state_root=state_root,
+        )
     if not allow_empty_profile:
-        _CACHE[resolved] = config
+        _CACHE[cache_key] = config
     return config
 
 
 def validation_summary(config: KeywordConfig) -> str:
-    return f"Company: {config.company_name} | Active keywords: {config.active_keyword_count}"
+    return (
+        f"Company: {config.company_name} | Active keywords: {config.active_keyword_count} | "
+        f"Rules source: {config.source_kind}"
+    )
 
 
 def print_validation_summary(config: KeywordConfig) -> None:
     print(f"KEYWORDS_CONFIG_VALID={config.path}", flush=True)
+    print(f"KEYWORDS_CONFIG_REQUESTED={config.requested_path or config.path}", flush=True)
+    print(f"KEYWORDS_CONFIG_SOURCE={config.source_kind}", flush=True)
     print(f"KEYWORDS_PROFILE={validation_summary(config)}", flush=True)

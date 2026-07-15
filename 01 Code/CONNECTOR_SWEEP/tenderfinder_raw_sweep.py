@@ -70,12 +70,14 @@ except Exception:
 
 import tenderfinder_guards as G
 import tenderfinder_source_registry as REG
+from tenderfinder_excel_safety import append_untrusted_row, safe_untrusted_excel_value
 from tenderfinder_keywords_config import (
     KeywordConfigError,
     load_keywords_config,
     print_validation_summary,
 )
 from tenderfinder_runtime import default_output_root
+from tenderfinder_url_safety import safe_requests_request, safe_urllib_fetch
 
 
 # ---------------------------------------------------------------------------
@@ -380,14 +382,8 @@ def _summary_counts(results, eligible_leads, rejected):
 
 
 def _excel_safe_text(value, limit=32000):
-    """Return a string safe for an Excel cell."""
-    if value is None:
-        return ""
-    text = str(value)
-    text = re.sub(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]", " ", text)
-    if len(text) > limit:
-        return text[:limit - 40] + " ... [truncated]"
-    return text
+    """Return an imported value safe for an Excel cell."""
+    return safe_untrusted_excel_value(value, limit=limit)
 
 
 def _json_safe_blob(value, limit=32000):
@@ -536,18 +532,41 @@ def _bulk_access_filter(rows, args):
 # ============================================================================
 # HTTP helpers
 # ============================================================================
-def http_get(url, timeout=90):
+def http_get(url, timeout=90, audit=None):
     if _HAVE_REQUESTS:
-        r = requests.get(url, headers={"User-Agent": UA}, timeout=timeout)
+        fetched = safe_requests_request(
+            "GET",
+            url,
+            request_callable=requests.request,
+            headers={"User-Agent": UA},
+            timeout=timeout,
+        )
+        r = fetched.response
         r.raise_for_status()
+        if audit is not None:
+            audit.update({
+                "http_status": int(getattr(r, "status_code", 0) or 0),
+                "final_validated_url": fetched.final_url,
+                "redirect_chain": list(fetched.redirect_chain),
+            })
         return r.text
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    fetched = safe_urllib_fetch(
+        url,
+        headers={"User-Agent": UA},
+        timeout=timeout,
+        max_bytes=20_000_000,
+    )
+    if audit is not None:
+        audit.update({
+            "http_status": int(fetched.status or 0),
+            "final_validated_url": fetched.final_url,
+            "redirect_chain": list(fetched.redirect_chain),
+        })
+    return fetched.body.decode("utf-8", errors="replace")
 
 
-def http_get_json(url, timeout=90):
-    return json.loads(http_get(url, timeout=timeout))
+def http_get_json(url, timeout=90, audit=None):
+    return json.loads(http_get(url, timeout=timeout, audit=audit))
 
 
 # ============================================================================
@@ -555,6 +574,11 @@ def http_get_json(url, timeout=90):
 # ============================================================================
 def resolve_hub_item(item_id, layer_index):
     meta = http_get_json(f"https://www.arcgis.com/sharing/rest/content/items/{item_id}?f=json")
+    return hub_item_candidate_from_metadata(meta, item_id, layer_index)
+
+
+def hub_item_candidate_from_metadata(meta, item_id, layer_index):
+    """Pure ArcGIS item resolver used by live and offline-fixture paths."""
     base = (meta.get("url") or "").rstrip("/")
     if not base:
         raise RuntimeError("endpoint_not_found: item has no service URL")
@@ -569,6 +593,11 @@ def discover_hub_candidates(hub_base, keywords):
     blind fallback (that caused wrong-layer pollution)."""
     feed_url = hub_base.rstrip("/") + "/api/feed/dcat-us/1.1.json"
     feed = http_get_json(feed_url)
+    return hub_candidates_from_feed(feed, keywords)
+
+
+def hub_candidates_from_feed(feed, keywords):
+    """Pure DCAT candidate extraction used by live and offline tests."""
     cands = []
     for ds in feed.get("dataset", []):
         title = ds.get("title") or ""
@@ -583,6 +612,11 @@ def discover_hub_candidates(hub_base, keywords):
 
 def discover_map_candidates(mapserver_url, keywords):
     meta = http_get_json(mapserver_url.rstrip("/") + "?f=json")
+    return map_candidates_from_metadata(meta, mapserver_url, keywords)
+
+
+def map_candidates_from_metadata(meta, mapserver_url, keywords):
+    """Pure MapServer layer selection used by live and offline tests."""
     cands = []
     for lyr in meta.get("layers", []):
         name = lyr.get("name") or ""
@@ -593,11 +627,32 @@ def discover_map_candidates(mapserver_url, keywords):
     return G.rank_candidate_layers(cands)
 
 
+def arcgis_attributes_from_payload(payload):
+    """Extract ArcGIS feature attributes from one sanitized response payload."""
+    if not isinstance(payload, dict) or payload.get("error"):
+        return []
+    return [
+        feature.get("attributes", {})
+        for feature in payload.get("features", [])
+        if isinstance(feature, dict) and isinstance(feature.get("attributes"), dict)
+    ]
+
+
+def ods_records_from_payload(payload):
+    """Extract Opendatasoft v2.1 rows from export or result wrappers."""
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        return [row for row in payload["results"] if isinstance(row, dict)]
+    return []
+
+
 # ============================================================================
 # Data pulls (return RAW attribute dicts so the richness gate can sample them)
 # ============================================================================
 def query_arcgis_layer(layer_url, max_records, page=250, pause=0.4,
-                       max_retries=3, retry_backoff=2.0):
+                       max_retries=3, retry_backoff=2.0, http_audit=None,
+                       where="1=1", order_by=""):
     """Pull records from an ArcGIS FeatureServer/MapServer layer.
 
     Patch 5.0 changes vs previous:
@@ -613,18 +668,23 @@ def query_arcgis_layer(layer_url, max_records, page=250, pause=0.4,
 
     while True:
         batch_num += 1
-        params = {"where": "1=1", "outFields": "*", "returnGeometry": "false",
-                  "resultOffset": offset, "resultRecordCount": page, "f": "json"}
+        remaining = max_records - len(rows)
+        if remaining <= 0:
+            break
+        request_count = min(page, remaining)
+        params = {"where": where or "1=1", "outFields": "*", "returnGeometry": "false",
+                  "resultOffset": offset, "resultRecordCount": request_count, "f": "json"}
+        if order_by:
+            params["orderByFields"] = order_by
         url = layer_url.rstrip("/") + "/query?" + urllib.parse.urlencode(params)
 
         batch = None
         for attempt in range(1, max_retries + 1):
             try:
-                data = http_get_json(url, timeout=60)
+                data = http_get_json(url, timeout=60, audit=http_audit)
                 if isinstance(data, dict) and data.get("error"):
                     raise RuntimeError(f"arcgis_error: {data['error'].get('message', data['error'])}")
-                feats = data.get("features", []) if isinstance(data, dict) else []
-                batch = [f.get("attributes", {}) for f in feats]
+                batch = arcgis_attributes_from_payload(data)
                 break  # success
             except Exception as e:
                 err_str = str(e)
@@ -656,9 +716,9 @@ def query_arcgis_layer(layer_url, max_records, page=250, pause=0.4,
         rows.extend(batch)
         print(f"    [arcgis] batch={batch_num} offset={offset} fetched={len(batch)} total={len(rows)}")
 
-        if len(batch) < page or len(rows) >= max_records:
+        if len(batch) < request_count or len(rows) >= max_records:
             break
-        offset += page
+        offset += len(batch)
         time.sleep(pause)
 
     if partial_warning:
@@ -668,22 +728,21 @@ def query_arcgis_layer(layer_url, max_records, page=250, pause=0.4,
     return rows[:max_records]
 
 
-def query_ods(base, slug, max_records):
+def query_ods(base, slug, max_records, http_audit=None):
     """Pull an Opendatasoft v2.1 dataset. NO keyword fallback: if the slug does
     not exist, raise slug_not_found (the old auto-search caused wrong datasets)."""
     # verify the exact slug exists first
     try:
-        http_get_json(f"{base}/api/explore/v2.1/catalog/datasets/{slug}")
+        http_get_json(
+            f"{base}/api/explore/v2.1/catalog/datasets/{slug}",
+            audit=http_audit,
+        )
     except Exception:
         raise RuntimeError(f"slug_not_found: ODS dataset '{slug}' not found "
                            f"(no silent fallback)")
     url = f"{base}/api/explore/v2.1/catalog/datasets/{slug}/exports/json"
-    data = http_get_json(url)
-    if isinstance(data, list):
-        return data[:max_records]
-    if isinstance(data, dict) and isinstance(data.get("results"), list):
-        return data["results"][:max_records]
-    return []
+    data = http_get_json(url, audit=http_audit)
+    return ods_records_from_payload(data)[:max_records]
 
 
 # ============================================================================
@@ -744,7 +803,14 @@ def normalize_lead(conn, layer_name, attrs):
 # ============================================================================
 # Connector runner — probe or pull one connector, with all gates
 # ============================================================================
-def run_connector(conn, max_records, probe=False, raw_dir=None):
+def run_connector(
+    conn,
+    max_records,
+    probe=False,
+    raw_dir=None,
+    query_where=None,
+    query_order_by=None,
+):
     """Returns (result) dict with classification + payloads.
     Never raises for data problems — failures are captured as status."""
     cid = conn.get("source_id") or conn.get("id")
@@ -760,7 +826,21 @@ def run_connector(conn, max_records, probe=False, raw_dir=None):
            "resolved": [], "resolved_endpoint": "", "raw_records": [],
            "raw_json_path": "", "records_pulled": 0, "classification": None,
            "output_route": None, "status": "", "richness": "", "error": "",
+           "http_status": 0, "final_validated_url": "", "redirect_chain": [],
            "next_action": "", "leads": [], "rejected": []}
+
+    runtime_skip_reason = str(conn.get("runtime_skip_reason") or "").strip()
+    if runtime_skip_reason:
+        operational_status = str(conn.get("operational_status") or "config_valid_only")
+        res["status"] = "skipped_source_status"
+        res["classification"] = (
+            G.CLASS_WRONG if operational_status == "wrong_source" else G.CLASS_MANUAL
+        )
+        res["output_route"] = (
+            "Rejected_Archive" if operational_status == "wrong_source" else "Run_Queue"
+        )
+        res["next_action"] = runtime_skip_reason
+        return res
 
     # ---- Patch 5.3: offline fixture short-circuit (regression harness only) -
     # When TENDER_FINDER_OFFLINE_FIXTURES is set we NEVER touch the network. Fixture-
@@ -934,12 +1014,19 @@ def run_connector(conn, max_records, probe=False, raw_dir=None):
 
     # ---- pull + richness gate + classify ----------------------------------
     name, url = candidates[0]
+    http_audit = {}
     try:
         if isinstance(url, tuple):     # ODS
             base, slug = url
-            recs = query_ods(base, slug, max_records)
+            recs = query_ods(base, slug, max_records, http_audit=http_audit)
         else:
-            recs = query_arcgis_layer(url, max_records)
+            recs = query_arcgis_layer(
+                url,
+                max_records,
+                http_audit=http_audit,
+                where=query_where or "1=1",
+                order_by=query_order_by or "",
+            )
     except Exception as e:
         if _should_use_fixture_fallback(e):
             fb = _load_fixture_leads_for_connector(conn, res, e)
@@ -953,6 +1040,9 @@ def run_connector(conn, max_records, probe=False, raw_dir=None):
         return res
 
     res["records_pulled"] = len(recs)
+    res["http_status"] = int(http_audit.get("http_status") or 0)
+    res["final_validated_url"] = str(http_audit.get("final_validated_url") or "")
+    res["redirect_chain"] = list(http_audit.get("redirect_chain") or [])
     res["raw_records"] = recs
 
     # always save raw, even if rejected
@@ -1011,7 +1101,7 @@ def _save_raw(raw_dir, cid, recs):
         w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         for r in recs:
-            w.writerow({k: r.get(k, "") for k in keys})
+            w.writerow({k: safe_untrusted_excel_value(r.get(k, "")) for k in keys})
     return {"json": json_path, "csv": csv_path}
 
 
@@ -1229,7 +1319,13 @@ def write_source_summary(results, out_dir, run_id):
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
-        w.writerows(rows)
+        for row in rows:
+            w.writerow(
+                {
+                    column: safe_untrusted_excel_value(row.get(column, ""))
+                    for column in fieldnames
+                }
+            )
     print(f"\n  Source summary  -> {csv_path}  ({len(rows)} connector rows)")
     return csv_path
 
@@ -1459,7 +1555,7 @@ def _write_demo_output(results, path, run_id):
             for col in lead_cols:
                 row.append(_excel_safe_text(lead.get(col) or lead.get(col.replace("/", "_")) or ""))
             row.append(lead.get("hold_reason") or "")
-            ws.append(row)
+            append_untrusted_row(ws, row)
         ws.freeze_panes = "A2"
         ws.title = label
         for i in range(1, ws.max_column + 1):
@@ -1485,7 +1581,7 @@ def _write_demo_output(results, path, run_id):
         leads = r.get("leads") or []
         fp = sum(1 for l in leads if l.get("write_eligible", True) and
                  l.get("proposed_route", "Future_Projects") == "Future_Projects")
-        ws_ss.append([
+        append_untrusted_row(ws_ss, [
             r.get("source_id"), r.get("source_name"), r.get("status"),
             r.get("records_pulled") or 0, fp,
             len(r.get("rejected") or []), 1 if r.get("error") else 0,
@@ -2047,7 +2143,7 @@ def _write_review_output(results, path):
         from openpyxl.styles import PatternFill
         ws.cell(1, len(cols)).fill = PatternFill("solid", fgColor="FFFF00")
         for row in rows:
-            ws.append([_excel_safe_text(row.get(c, "")) for c in cols])
+            append_untrusted_row(ws, [row.get(c, "") for c in cols])
         ws.freeze_panes = "A2"
         # Add data validation for review_decision column
         try:
@@ -2070,7 +2166,7 @@ def _write_review_output(results, path):
             w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
             w.writeheader()
             for row in rows:
-                w.writerow(row)
+                w.writerow({c: safe_untrusted_excel_value(row.get(c, "")) for c in cols})
 
 
 def _write_probe_xlsx(results, path):
@@ -2083,9 +2179,14 @@ def _write_probe_xlsx(results, path):
     for c in range(1, len(cols) + 1):
         ws.cell(1, c).font = Font(bold=True)
     for r in results:
-        ws.append([r["source_id"], r["source_name"], r["fetch_type"], r["status"],
-                   " | ".join(r["resolved"]), r["classification"] or "",
-                   r["output_route"] or "", r["next_action"], r["error"]])
+        append_untrusted_row(
+            ws,
+            [
+                r["source_id"], r["source_name"], r["fetch_type"], r["status"],
+                " | ".join(r["resolved"]), r["classification"] or "",
+                r["output_route"] or "", r["next_action"], r["error"],
+            ],
+        )
     ws.freeze_panes = "A2"
     for i, c in enumerate(cols, 1):
         ws.column_dimensions[get_column_letter(i)].width = 24

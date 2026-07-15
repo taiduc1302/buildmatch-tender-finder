@@ -32,28 +32,15 @@ set "PY_LAUNCHER="
 set "TENDER_FINDER_BOOTSTRAP_ROOT=%~dp0"
 
 :DETECT
-REM Refresh PATH with the common per-user (and, just in case, the
-REM all-users) install locations before every detection pass. A
-REM winget or python.org install that just finished does NOT
-REM automatically update THIS already-running cmd.exe session's
-REM PATH, so without this heuristic a Retry could keep failing even
-REM though Python is now genuinely installed - the user would have
-REM to close this window and reopen it. This makes Retry usually
-REM work immediately instead.
-for /d %%V in ("%LocalAppData%\Programs\Python\Python3*") do (
-    set "PATH=%%V;%%V\Scripts;%PATH%"
-)
-for /d %%V in ("%ProgramFiles%\Python3*") do (
-    set "PATH=%%V;%%V\Scripts;%PATH%"
-)
-for /d %%V in ("%ProgramFiles(x86)%\Python3*") do (
-    set "PATH=%%V;%%V\Scripts;%PATH%"
-)
+REM Never prepend every discovered Python directory to PATH here. A stale
+REM Python 3.10 install can otherwise hide a supported Python 3.11+ that the
+REM user deliberately placed first on PATH. Check explicit/current commands
+REM first, then probe common install locations one executable at a time.
 
 REM --- Step 1: bundled/local Python, if a maintainer drops a
 REM portable Python under tools\python\ next to this file ---------
 if exist "%TENDER_FINDER_BOOTSTRAP_ROOT%tools\python\python.exe" (
-    "%TENDER_FINDER_BOOTSTRAP_ROOT%tools\python\python.exe" --version >nul 2>&1
+    "%TENDER_FINDER_BOOTSTRAP_ROOT%tools\python\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 and sys.version_info.minor not in range(0,11) else 1)" >nul 2>&1
     if not errorlevel 1 set "PY_LAUNCHER=%TENDER_FINDER_BOOTSTRAP_ROOT%tools\python\python.exe"
 )
 
@@ -61,7 +48,7 @@ REM --- Step 2: the "py" launcher (py -3) --------------------------
 if "%PY_LAUNCHER%"=="" (
     where py >nul 2>&1
     if not errorlevel 1 (
-        py -3 --version >nul 2>&1
+        py -3 -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 and sys.version_info.minor not in range(0,11) else 1)" >nul 2>&1
         if not errorlevel 1 set "PY_LAUNCHER=py -3"
     )
 )
@@ -70,9 +57,25 @@ REM --- Step 3: plain "python" on PATH ------------------------------
 if "%PY_LAUNCHER%"=="" (
     where python >nul 2>&1
     if not errorlevel 1 (
-        python --version >nul 2>&1
+        python -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 and sys.version_info.minor not in range(0,11) else 1)" >nul 2>&1
         if not errorlevel 1 set "PY_LAUNCHER=python"
     )
+)
+
+REM --- Step 3b: plain "python3" on PATH -----------------------------
+if "%PY_LAUNCHER%"=="" (
+    where python3 >nul 2>&1
+    if not errorlevel 1 (
+        python3 -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 and sys.version_info.minor not in range(0,11) else 1)" >nul 2>&1
+        if not errorlevel 1 set "PY_LAUNCHER=python3"
+    )
+)
+
+REM --- Step 3c: common install folders, without changing PATH ------
+if "%PY_LAUNCHER%"=="" (
+    for /d %%V in ("%LocalAppData%\Programs\Python\Python3*") do call :TRY_CANDIDATE "%%~fV\python.exe"
+    for /d %%V in ("%ProgramFiles%\Python3*") do call :TRY_CANDIDATE "%%~fV\python.exe"
+    for /d %%V in ("%ProgramFiles(x86)%\Python3*") do call :TRY_CANDIDATE "%%~fV\python.exe"
 )
 
 if not "%PY_LAUNCHER%"=="" goto :FOUND
@@ -139,4 +142,11 @@ goto :DETECT
 :FOUND
 echo   Found Python: %PY_LAUNCHER%
 %PY_LAUNCHER% --version
+exit /b 0
+
+:TRY_CANDIDATE
+if not "%PY_LAUNCHER%"=="" exit /b 0
+if not exist "%~1" exit /b 0
+"%~1" -c "import sys; raise SystemExit(0 if sys.version_info.major == 3 and sys.version_info.minor not in range(0,11) else 1)" >nul 2>&1
+if not errorlevel 1 set "PY_LAUNCHER=%~1"
 exit /b 0
