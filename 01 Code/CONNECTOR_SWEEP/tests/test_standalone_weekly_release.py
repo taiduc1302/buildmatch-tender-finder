@@ -260,7 +260,10 @@ def test_runtime_isolation_and_manifest_identity() -> None:
             migration_state = base / "migration_state"
             os.environ[STATE_ROOT_ENV_VAR] = str(migration_state)
             migrated = load_user_config(fake_package)
-            assert migrated["email_import_path"] == str(legacy_inbox)
+            # Windows runners can expose the temporary directory through an
+            # 8.3 alias (for example RUNNER~1) while Path.resolve() inside the
+            # package expands it. Compare the path identity, not its spelling.
+            assert Path(migrated["email_import_path"]).resolve() == legacy_inbox.resolve()
             assert tenderfinder_user_config_path(fake_package).parent == (migration_state / "settings").resolve()
         finally:
             if previous_state is None:

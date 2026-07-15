@@ -536,6 +536,7 @@ def test_auto_open_workbook_failure_does_not_crash() -> None:
     (out_dir / "tenderfinder_stage_progress.json").write_text(json.dumps({"stages": ["completed"]}), encoding="utf-8")
     original_reader = g.read_run_results
     original_open = g.open_path_with_default_app
+    original_no_open = os.environ.get("TENDER_FINDER_DEMO_NO_OPEN")
     warnings: list[str] = []
     try:
         g.read_run_results = lambda _out_dir: {
@@ -552,6 +553,9 @@ def test_auto_open_workbook_failure_does_not_crash() -> None:
         def _boom(_path: str) -> None:
             raise OSError("cannot open")
         g.open_path_with_default_app = _boom
+        # The offline CI job deliberately disables automatic opening globally.
+        # This test exercises the enabled branch, so isolate it from that env.
+        os.environ.pop("TENDER_FINDER_DEMO_NO_OPEN", None)
         app.messagebox.showinfo = lambda *a, **k: None
         app.messagebox.showwarning = lambda _title, body: warnings.append(body)
         app.worker = type("Worker", (), {"out_dir": out_dir, "return_code": 0})()
@@ -561,6 +565,10 @@ def test_auto_open_workbook_failure_does_not_crash() -> None:
     finally:
         g.read_run_results = original_reader
         g.open_path_with_default_app = original_open
+        if original_no_open is None:
+            os.environ.pop("TENDER_FINDER_DEMO_NO_OPEN", None)
+        else:
+            os.environ["TENDER_FINDER_DEMO_NO_OPEN"] = original_no_open
         try:
             app.root.destroy()
         except Exception:
