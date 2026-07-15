@@ -29,4 +29,4 @@ after execution and found no change:
 | `Launch_TENDER_FINDER_GUI.bat` | `ef9176ae45313e90858f9430eea11106e7062c35b7c9abf36070311a04206371` |
 
 Self-Test manifest:
-`C:\tenderfinder_out\self_test\self_test_20260715_100508_12831ed5\run_manifest.json`.
+`C:\tenderfinder_out\self_test\self_test_20260715_101135_2ad06d9f\run_manifest.json`.

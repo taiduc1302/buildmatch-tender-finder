@@ -27,11 +27,11 @@ inside the package.
 
 ## Authoritative checkout Self-Test
 
-- Run ID: `self_test_20260715_100508_12831ed5`.
+- Run ID: `self_test_20260715_101135_2ad06d9f`.
 - Result: **PASS**, exit code 0.
-- Passed: 112.
+- Passed: 113.
 - Failed: 0.
-- Skipped: 2.
+- Skipped: 1.
 - Intentionally excluded: 3.
 - Not tested due to missing fixture: 0.
 - Network attempts: 0 (process-wide DNS/socket deny guard plus real pipeline
@@ -39,13 +39,11 @@ inside the package.
 - Real offline pipeline result: PASS.
 - Protected keywords/source/Agent2/launcher hashes: unchanged.
 - Manifest:
-  `C:\tenderfinder_out\self_test\self_test_20260715_100508_12831ed5\run_manifest.json`.
+  `C:\tenderfinder_out\self_test\self_test_20260715_101135_2ad06d9f\run_manifest.json`.
 
 This run also proved the final workbook builder selected the checkout's own
 `00 Master\TENDER_FINDER_Tender_Intelligence_Working_Master_TEMPLATE_v1.xlsx`,
 not the newer template copy in another test installation.
 
-This pre-commit run intentionally recorded
-`clean_git_worktree_after_self_test: SKIP_BASELINE_DIRTY` because stabilization
-changes were not committed yet. The test still proved Self-Test did not alter
-the existing status. A clean-commit rerun is a final release gate.
+Both `git_worktree_unchanged_by_self_test` and
+`clean_git_worktree_after_self_test` passed from a clean committed checkout.

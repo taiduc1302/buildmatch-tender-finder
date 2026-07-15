@@ -182,12 +182,16 @@ Self-Test selected
 
 ## Current verification snapshot
 
-- Authoritative checkout Self-Test: **PASS**, `112 passed / 0 failed / 2
+- Authoritative clean-checkout Self-Test: **PASS**, `113 passed / 0 failed / 1
   skipped / 3 intentionally excluded / 0 not tested due to fixture`, exit 0.
 - Self-Test network guard: zero network attempts; real pipeline executed with
   `--no-fetch`.
 - Manifest:
-  `C:\tenderfinder_out\self_test\self_test_20260715_100508_12831ed5\run_manifest.json`.
+  `C:\tenderfinder_out\self_test\self_test_20260715_101135_2ad06d9f\run_manifest.json`.
+- Extracted final-package Self-Test: **PASS**, `111 passed / 0 failed / 1
+  skipped / 4 intentionally excluded / 0 not tested due to fixture`, exit 0.
+  The fourth package exclusion records that a source archive has no Git
+  checkout metadata.
 - Moved extracted package GUI Self-Test: **PASS**, `110 / 0 / 1 / 4 / 0`, exit
   0. The extra package exclusion records that an archive has no Git checkout.
 - Canonical `keywords.xlsx`: VALID, 227 active, 0 inactive, 12 categories;

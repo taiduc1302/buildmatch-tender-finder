@@ -56,3 +56,31 @@ extraction, forbidden-payload, and secret scans:
 This is explicitly pre-commit evidence, not the final release artifact. The
 final ZIP must be rebuilt from a clean committed checkout with
 `--require-clean` and recorded in `STABILIZATION_RELEASE_REPORT.md`.
+
+## Final clean release
+
+- Source commit: `340e88ba8145a2fd7c30e842d4c1172d60aeaca2`.
+- Source worktree dirty: false.
+- ZIP:
+  `C:\tenderfinder_out\release_internal_weekly_beta_v1\Tender_Finder_internal-weekly-beta-v1.zip`.
+- Size: 675,899 bytes.
+- Entries: 97 (94 source files plus three generated release records).
+- SHA-256:
+  `221bc3935693cf0f712f37f2655e40e4563c2e09ba291e2bbec9f3a7e0514395`.
+- Extracted root:
+  `C:\tenderfinder_out\release_internal_weekly_beta_v1_extracted\Tender_Finder_Internal_Weekly_Beta_v1`.
+- CRC/manifest/exclusion verification: PASS.
+- Extracted syntax/import/zero-network import guard: PASS.
+- Extracted package secret audit: PASS.
+- Extracted Self-Test: PASS, `111 / 0 / 1 / 4 / 0`, exit 0; manifest:
+  `C:\tenderfinder_out\release_internal_weekly_beta_v1_package_selftest\self_test\self_test_20260715_101236_faad4d66\run_manifest.json`.
+
+The first unattended setup attempt on this Windows profile correctly returned
+nonzero with actionable instructions because no supported system Python was
+on PATH (only stale Python 3.10/3.13 registrations). With an available local
+Python 3.12 placed on PATH, the same final extracted package created a new
+`.venv`, installed all requirements and Chromium, preserved the canonical
+launcher, and created a Desktop shortcut targeting the final extracted path.
+Launching that shortcut opened the final GUI with Live Run, Offline/Test Run,
+Self-Test, Keywords, and Source Checks visible. This remains a Python source
+application; Python/first-run dependency installation is a prerequisite.
