@@ -1,132 +1,169 @@
-r"""Tender Finder — package sanitization audit.
+#!/usr/bin/env python3
+"""Scan a repository or extracted clean release for secrets and private data.
 
-Re-scans the whole package (text files AND Excel workbook cells) for:
-  - original internal brand tokens
-  - real-looking email addresses (non-placeholder, non-public-portal)
-  - secret patterns (API keys, tokens, passwords, cookies)
-  - private local paths / OneDrive user paths
-  - vcs / venv / cache folders that must not ship
-
-Usage:  python scripts\package_audit.py [package_root]
-Exit 0 + "PACKAGE AUDIT: PASS" when clean.
-
-Requires: openpyxl (already a runtime dependency).
+Company/scoring profile text is intentional configuration and is not a secret.
+Package mode additionally rejects forbidden build/runtime directories and
+machine-specific paths. Repository mode skips the checkout's own `.git` and
+`.venv`, while still scanning all source/configuration files.
 """
 from __future__ import annotations
 
+import argparse
+import os
 import re
-import sys
 from pathlib import Path
 
-ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]
 
-TEXT_EXTS = {".py", ".md", ".txt", ".csv", ".bat", ".yml", ".yaml", ".json",
-             ".eml", ".command", ".example", ".cfg", ".ini", ".toml", ".html"}
-
-# Deliberately assembled from fragments so this file never contains the
-# forbidden tokens itself.
-BRAND = "ty" + "bo"
-BRAND_PATTERNS = [
-    re.compile(BRAND, re.IGNORECASE),
-]
-
+TEXT_EXTS = {
+    ".py", ".md", ".txt", ".csv", ".bat", ".yml", ".yaml", ".json",
+    ".command", ".example", ".cfg", ".ini", ".toml", ".html",
+}
 SECRET_PATTERNS = [
-    re.compile(r"tvly-(?!your-key-here)[A-Za-z0-9_-]{10,}"),   # Tavily key (placeholder ok)
-    re.compile(r"sk-(?:ant-)?[A-Za-z0-9_-]{20,}"),             # Anthropic/OpenAI-style keys
-    re.compile(r"AKIA[0-9A-Z]{16}"),                            # AWS access key
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),                        # GitHub token
-    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),                # Slack token
-    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    re.compile(r"(?i)(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*['\"][^'\"\s]{8,}['\"]"),
-    re.compile(r"(?i)set-cookie:"),
+    ("Tavily API key", re.compile(r"tvly-(?!your-key-here)[A-Za-z0-9_-]{10,}")),
+    ("OpenAI/Anthropic-style key", re.compile(r"sk-(?:ant-)?[A-Za-z0-9_-]{20,}")),
+    ("AWS access key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("GitHub token", re.compile(r"gh[oprsu]_[A-Za-z0-9]{20,}")),
+    ("Slack token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")),
+    ("private key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
+    (
+        "assigned secret",
+        re.compile(
+            r"(?i)(?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)"
+            r"\s*[:=]\s*['\"][^'\"\s]{8,}['\"]"
+        ),
+    ),
+    ("cookie header", re.compile(r"(?i)(?:set-cookie|cookie)\s*:")),
 ]
-
-PATH_PATTERNS = [
-    re.compile(r"(?i)C:[\\/]+Users[\\/]+(?!x\b|Public\b|ExampleUser\b|<)[A-Za-z0-9._-]+"),
-    re.compile(r"(?i)OneDrive - (?!Example)"),
+PRIVATE_PATH_PATTERNS = [
+    re.compile(r"(?i)C:[\\/]+Users[\\/]+(?!Public\b|ExampleUser\b|example\b|x\b|<)[A-Za-z0-9._-]+"),
+    re.compile(r"(?i)OneDrive - (?!Example\b)"),
 ]
-
-FORBIDDEN_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", "node_modules",
-                  ".agents", ".codex_tmp"}
-
-# Placeholder / public-infrastructure addresses that are allowed to remain.
-EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}")
+EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 ALLOWED_EMAIL_DOMAINS = {
-    "example.com", "example.org",
-    # public procurement portals / public agency contacts used by connectors,
-    # fixtures, and docs (public information, not personal data):
-    "bidsandtenders.ca", "bcbid.gov.bc.ca", "gov.bc.ca", "surrey.ca",
-    "bidcentral.ca", "buildingconnected.com", "civicinfo.bc.ca",
-    "anthropic.com",
+    "example.com", "example.org", "bidsandtenders.ca", "bcbid.gov.bc.ca",
+    "gov.bc.ca", "surrey.ca", "bidcentral.ca", "buildingconnected.com",
+    "civicinfo.bc.ca", "anthropic.com", "users.noreply.github.com",
+}
+SKIP_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", "node_modules"}
+PACKAGE_FORBIDDEN_DIRS = SKIP_DIRS | {".codex_tmp", "user_data", "demo_history", "raw_runs"}
+PACKAGE_FORBIDDEN_SUFFIXES = {
+    ".pyc", ".pyo", ".log", ".tmp", ".eml", ".db", ".sqlite", ".sqlite3",
 }
 
-findings: list[str] = []
+
+def iter_files(root: Path, *, package_mode: bool, findings: list[str]):
+    for current, dirs, files in os.walk(root):
+        current_path = Path(current)
+        retained = []
+        for name in dirs:
+            folded = name.casefold()
+            relative = (current_path / name).relative_to(root).as_posix()
+            if package_mode and folded in PACKAGE_FORBIDDEN_DIRS:
+                findings.append(f"FORBIDDEN_DIR {relative}")
+                continue
+            if folded in SKIP_DIRS:
+                continue
+            retained.append(name)
+        dirs[:] = retained
+        for name in files:
+            path = current_path / name
+            relative = path.relative_to(root).as_posix()
+            if package_mode and (
+                path.suffix.casefold() in PACKAGE_FORBIDDEN_SUFFIXES
+                or path.name.startswith("~$")
+            ):
+                findings.append(f"FORBIDDEN_FILE {relative}")
+                continue
+            yield path
 
 
-def check_text(rel: str, text: str) -> None:
-    for pat in BRAND_PATTERNS:
-        for m in pat.finditer(text):
-            findings.append(f"BRAND {rel}: ...{text[max(0, m.start()-30):m.end()+30]!r}...")
-    for pat in SECRET_PATTERNS:
-        for m in pat.finditer(text):
-            findings.append(f"SECRET {rel}: pattern {pat.pattern[:40]!r} matched {m.group(0)[:40]!r}")
-    for pat in PATH_PATTERNS:
-        for m in pat.finditer(text):
-            findings.append(f"PRIVATE_PATH {rel}: {m.group(0)[:60]!r}")
-    for m in EMAIL_RE.finditer(text):
-        domain = m.group(0).rsplit("@", 1)[1].lower().rstrip(".")
+def check_text(relative: str, text: str, *, package_mode: bool, findings: list[str], warnings: list[str]) -> None:
+    for label, pattern in SECRET_PATTERNS:
+        for match in pattern.finditer(text):
+            findings.append(f"SECRET {relative}: {label} matched {match.group(0)[:40]!r}")
+    for pattern in PRIVATE_PATH_PATTERNS:
+        for match in pattern.finditer(text):
+            message = f"PRIVATE_PATH {relative}: {match.group(0)!r}"
+            (findings if package_mode else warnings).append(message)
+    for match in EMAIL_RE.finditer(text):
+        address = match.group(0)
+        domain = address.rsplit("@", 1)[1].casefold().rstrip(".")
         if domain not in ALLOWED_EMAIL_DOMAINS:
-            findings.append(f"EMAIL {rel}: {m.group(0)}")
+            findings.append(f"UNAPPROVED_EMAIL {relative}: {address}")
+
+
+def audit(root: Path, *, mode: str) -> dict[str, object]:
+    root = root.expanduser().resolve()
+    package_mode = mode == "package"
+    findings: list[str] = []
+    warnings: list[str] = []
+    text_count = 0
+    workbook_count = 0
+    this_script = Path(__file__).resolve()
+    for path in iter_files(root, package_mode=package_mode, findings=findings):
+        relative = path.relative_to(root).as_posix()
+        if path.resolve() == this_script or relative.casefold() == "scripts/package_audit.py":
+            continue
+        if path.suffix.casefold() in TEXT_EXTS or path.name in {".gitignore", ".gitattributes"}:
+            try:
+                text = path.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                text = path.read_text(encoding="cp1252", errors="replace")
+            check_text(relative, text, package_mode=package_mode, findings=findings, warnings=warnings)
+            text_count += 1
+        elif path.suffix.casefold() == ".xlsx" and not path.name.startswith("~$"):
+            try:
+                from openpyxl import load_workbook
+
+                workbook = load_workbook(path, read_only=True, data_only=True)
+                for sheet in workbook.worksheets:
+                    for row in sheet.iter_rows(values_only=True):
+                        for value in row:
+                            if isinstance(value, str):
+                                check_text(
+                                    f"{relative}::{sheet.title}",
+                                    value,
+                                    package_mode=package_mode,
+                                    findings=findings,
+                                    warnings=warnings,
+                                )
+                workbook.close()
+                workbook_count += 1
+            except Exception as exc:  # noqa: BLE001
+                findings.append(f"XLSX_UNREADABLE {relative}: {type(exc).__name__}: {exc}")
+    return {
+        "mode": mode,
+        "root": str(root),
+        "text_files": text_count,
+        "workbooks": workbook_count,
+        "findings": findings,
+        "warnings": warnings,
+        "passed": not findings,
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Scan Tender Finder source/release content for secrets.")
+    parser.add_argument("root", nargs="?", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--mode", choices=("repo", "package"), default="package")
+    return parser.parse_args()
 
 
 def main() -> int:
-    n_text = n_wb = 0
-    for p in sorted(ROOT.rglob("*")):
-        rel = p.relative_to(ROOT).as_posix()
-        if p.is_dir():
-            if p.name in FORBIDDEN_DIRS:
-                # .venv is expected once the user runs setup; flag the rest.
-                if p.name == ".venv" and p.parent == ROOT:
-                    continue
-                if p.name == "__pycache__":
-                    findings.append(f"CACHE_DIR {rel}: delete before redistributing")
-                else:
-                    findings.append(f"FORBIDDEN_DIR {rel}")
-            continue
-        if ROOT.joinpath(".venv") in p.parents:
-            continue
-        if p.resolve() == Path(__file__).resolve():
-            # this file defines the detection patterns, so it would
-            # always match itself
-            continue
-        if p.suffix.lower() in TEXT_EXTS or p.name in (".gitignore", ".gitattributes"):
-            try:
-                text = p.read_bytes().decode("utf-8")
-            except UnicodeDecodeError:
-                text = p.read_bytes().decode("cp1252", errors="replace")
-            check_text(rel, text)
-            n_text += 1
-        elif p.suffix.lower() == ".xlsx" and "~$" not in p.name:
-            try:
-                from openpyxl import load_workbook
-                wb = load_workbook(p, read_only=True, data_only=True)
-                for ws in wb.worksheets:
-                    for row in ws.iter_rows(values_only=True):
-                        for v in row:
-                            if isinstance(v, str):
-                                check_text(f"{rel}::{ws.title}", v)
-                wb.close()
-                n_wb += 1
-            except Exception as e:  # noqa: BLE001
-                findings.append(f"XLSX_UNREADABLE {rel}: {e}")
-
-    print(f"scanned {n_text} text files, {n_wb} workbooks under {ROOT}")
-    if findings:
-        print(f"PACKAGE AUDIT: FAIL ({len(findings)} findings)")
-        for f in findings[:200]:
-            print("  " + f)
+    args = parse_args()
+    result = audit(args.root, mode=args.mode)
+    print(
+        f"scanned {result['text_files']} text files and {result['workbooks']} workbooks "
+        f"under {result['root']}"
+    )
+    for warning in result["warnings"][:100]:
+        print("WARNING: " + warning)
+    if result["findings"]:
+        print(f"PACKAGE AUDIT: FAIL ({len(result['findings'])} finding(s))")
+        for finding in result["findings"][:200]:
+            print("  " + finding)
         return 1
-    print("PACKAGE AUDIT: PASS")
+    print(f"PACKAGE AUDIT: PASS ({result['mode']} mode)")
     return 0
 
 

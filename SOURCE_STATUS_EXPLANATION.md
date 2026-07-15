@@ -1,15 +1,52 @@
 # Source Status Explanation
 
-## Email Alert Intake statuses
+`config/sources.csv` is the single runtime source registry. These dimensions
+must not be conflated:
 
-- `EMAIL_INTAKE_NO_FILES`: the selected/default folder exists but no `.eml` files were found.
-- `EMAIL_INTAKE_PARSED_ROWS`: TENDER_FINDER parsed one or more tender rows from approved `.eml` files.
-- `EMAIL_INTAKE_PARSE_ZERO_ROWS`: `.eml` files were present but none produced tender rows.
-- `EMAIL_INTAKE_REJECTED_FILES`: `.eml` files were present but only rejected/duplicate outcomes remained.
-- `EMAIL_INTAKE_SKIPPED_NO_FOLDER`: TENDER_FINDER had no usable folder path for manual import.
+- **configured**: a row exists;
+- **enabled**: `active=Y`;
+- **runtime-eligible**: the row is enabled, supported, sufficiently configured,
+  and not held by an operational status;
+- **offline fixture pass**: its adapter parser normalized a sanitized fixture;
+- **verified live**: an explicit current one-source live test reached a public
+  endpoint and normalized relevant records.
 
-## Routing behavior
+Operational status vocabulary:
 
-- Open and actionable civil email rows go to `BID_NOW_Active_Tenders`.
-- Closed or historical email rows go to `Tender_History_Closed_Public`.
-- Non-actionable or filtered email rows stay in `Tender_Signals_All` with `filtered_reason`.
+- `verified_live` — current structured live proof succeeded;
+- `ready_for_live_test` — config is runnable but current live proof is absent;
+- `config_valid_only` — schema is valid, operational/parser proof incomplete;
+- `manual_only` — operator/manual portal workflow;
+- `needs_configuration` — endpoint or required adapter details incomplete;
+- `blocked` — known access/network policy hold;
+- `wrong_source` — endpoint was shown to contain the wrong dataset/content;
+- `deprecated` — intentionally retired.
+
+Historical `LIVE`, `CONFIRMED`, or pull-count text is retained in legacy fields
+for provenance but does not automatically become `verified_live`.
+
+GUI actions are intentionally distinct:
+
+- **Validate Configuration**: no parser, no network;
+- **Offline Parser Test**: real parser/normalizer against a local fixture;
+- **Live Source Test**: explicit selected-source network operation and the only
+  path to `verified_live`.
+
+The GUI summary is authoritative for current counts. Do not claim all 39
+configured rows work merely because they exist or are enabled.
+
+For ArcGIS development sources, `test_query_where` and
+`test_query_order_by` may narrow the explicit bounded Live Source Test to a
+representative current sample. They affect only the controlled test query, not
+the source identity. `test_query_where` is length/control/semicolon validated;
+`test_query_order_by` accepts only field names with optional `ASC`/`DESC`.
+After a test, `last_good_endpoint` keeps the reusable base endpoint while the
+result's `final_validated_url` records the full validated request URL for audit.
+
+Email Alert Intake statuses remain separate from source operational status:
+
+- `EMAIL_INTAKE_NO_FILES`
+- `EMAIL_INTAKE_PARSED_ROWS`
+- `EMAIL_INTAKE_PARSE_ZERO_ROWS`
+- `EMAIL_INTAKE_REJECTED_FILES`
+- `EMAIL_INTAKE_SKIPPED_NO_FOLDER`

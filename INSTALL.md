@@ -1,82 +1,47 @@
-# INSTALL — Tender Finder
+# Install Tender Finder on Windows
+
+Tender Finder is a clickable Python application, not a self-contained EXE.
 
 ## Requirements
 
-- **Windows** (primary; macOS launcher scripts are in `packaging\macos\`)
-- **Python 3.10+** (validated with 3.13 in the original patch cycle and with
-  3.14 during package sanitization — see `PYTHON_VERSION_NOTE.md`)
-- No admin rights, no database, no cloud account required.
+- Windows 10/11.
+- Python 3.11+ available through `py`, `python`, or `python3`.
+- Internet access for first-run packages and Playwright Chromium.
+- No admin rights, database, cloud account, or portal credentials are required.
 
-## Option A — scripted setup (recommended)
+## Recommended setup
 
-```bat
-setup_venv.bat
+Extract the clean ZIP into a normal local folder and double-click:
+
+```text
+Launch_TENDER_FINDER_GUI.bat
 ```
 
-This calls `setup_tenderfinder_environment.bat`, which creates a `.venv` in the
-package root and installs dependencies. If no Python is found it attempts a
-user-local bootstrap via `_python_bootstrap.bat`.
+The launcher checks `.venv`, calls `setup_tenderfinder_environment.bat` when
+needed, verifies imports, and opens the GUI. If Python is unavailable, the
+bootstrap prints an official download instruction. Dependency or Chromium
+install failures remain visible and return non-zero.
 
-## Option B — manual setup
+The ZIP deliberately excludes `.venv`; do not copy one from another computer.
+Setup never rewrites the canonical repository-relative launcher. An optional
+Desktop shortcut points to that launcher.
 
-```bat
-python -m venv .venv
-.venv\Scripts\pip install -r "01 Code\CONNECTOR_SWEEP\requirements.txt"
+## Manual setup
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-### Runtime dependencies (`requirements.txt`)
+## Verify
 
-| Package | Used for |
-|---|---|
-| `openpyxl` | all Excel workbook reading/writing (required) |
-| `beautifulsoup4` | HTML parsing in live connectors |
-| `playwright` | optional browser-assisted fetch for bot-checked portals (BC Bid); **not needed** for offline/synthetic demo. After install run `playwright install chromium` only if you use this feature. |
+Double-click `verify_package.bat` or run:
 
-### Test/dev dependencies (`requirements-dev.txt`)
-
-Needed only to run the full test suite:
-
-```bat
-.venv\Scripts\pip install -r "01 Code\CONNECTOR_SWEEP\requirements-dev.txt"
+```powershell
+.\.venv\Scripts\python.exe "01 Code\CONNECTOR_SWEEP\tenderfinder_self_test.py" --root .
 ```
 
-(`pyyaml`, `pandas`, `requests`, `urllib3`, `pdfplumber`, `reportlab` — the last
-two only for the Surrey PDF parser test, which generates its own test PDFs.)
-
-## Verify the installation
-
-```bat
-verify_package.bat
-```
-
-Expected final line: `VERIFY_PACKAGE: PASS`. This step checks your Python
-environment and dependencies only — it does not touch the demo yet, so a PASS
-here means your install is good, full stop.
-
-Then run the offline demo:
-
-```bat
-run_demo_synthetic.bat
-```
-
-Expected: `demo_out_synthetic\TENDER_FINDER_DEMO_Opportunities_Three_Buckets.xlsx`
-is created — this is the actual product output, and it always succeeds on the
-shipped synthetic data.
-
-> You will then see the run end with a **second, unrelated** message:
-> `Overall: FAIL` from an optional final-review stage. This is expected and by
-> design — it's the anti-fixture guard confirming the synthetic demo data
-> would never be mistaken for real production data. It is **not** an install
-> problem and does not mean the workbook above wasn't created correctly. See
-> `TEST_RESULTS.md` for the exact lines and why each one is safe to ignore on
-> synthetic data.
-
-## Notes
-
-- Batch launchers prefer `.venv\Scripts\python.exe` and fall back to `python`
-  on PATH.
-- Output default locations: package-local folders plus `C:\tenderfinder_out\`
-  for some launcher-driven runs (created automatically; safe to delete).
-- Long-path/OneDrive issues: the workbook writer automatically falls back to a
-  short local temp path if the target path is too long (see
-  `tenderfinder_live_link_checker.py` notes).
+Require `SELF_TEST: PASS`. Self-Test is strictly offline and writes artifacts
+beneath `C:\tenderfinder_out`, not the program folder.

@@ -25,6 +25,7 @@ from tenderfinder_package_paths import (
     save_user_config,
     tenderfinder_user_config_path,
 )
+from tenderfinder_excel_safety import safe_untrusted_excel_value
 
 try:
     from bs4 import BeautifulSoup
@@ -721,7 +722,12 @@ def write_outputs(rows: list[EmailTender], out_dir: Path) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow(asdict(row))
+            writer.writerow(
+                {
+                    key: safe_untrusted_excel_value(value)
+                    for key, value in asdict(row).items()
+                }
+            )
 
 
 def run_email_intake(

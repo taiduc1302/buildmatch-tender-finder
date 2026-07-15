@@ -18,6 +18,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from tenderfinder_excel_safety import append_untrusted_row, set_untrusted_cell
+
 DATA_DIR = Path(__file__).resolve().parent / "data"
 BACKLOG_XLSX = DATA_DIR / "TENDER_FINDER_Source_Universe_Backlog_v2_EXPANDED.xlsx"
 BACKLOG_CSV = DATA_DIR / "TENDER_FINDER_Potential_Unaccounted_Sources_v2_EXPANDED.csv"
@@ -473,7 +475,7 @@ def append_source_roadmap_printable_sheet(wb) -> None:
     rows.append(["Full detail: see the Potential_Sources_Next tab (all rows, filterable, with rank/score/phase/risk fields).", "", ""])
 
     for row in rows:
-        ws.append(row)
+        append_untrusted_row(ws, row)
     for cell in ws[1]:
         cell.fill = PatternFill("solid", fgColor="17365D")
         cell.font = Font(name="Arial", bold=True, color="FFFFFF", size=12)
@@ -510,7 +512,7 @@ def append_potential_sources_sheet(wb) -> None:
 
     summary, headers, data_rows = build_potential_sources_content()
     for row in summary:
-        ws.append(row)
+        append_untrusted_row(ws, row)
     for cell in ws[1]:
         cell.fill = PatternFill("solid", fgColor="17365D")
         cell.font = Font(name="Arial", bold=True, color="FFFFFF")
@@ -529,7 +531,7 @@ def append_potential_sources_sheet(wb) -> None:
         cell.alignment = Alignment(vertical="center", wrap_text=True)
     for offset, row in enumerate(data_rows, 1):
         for col, value in enumerate(row, 1):
-            cell = ws.cell(header_row + offset, col, value)
+            cell = set_untrusted_cell(ws.cell(header_row + offset, col), value)
             cell.font = Font(name="Arial", size=10)
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 

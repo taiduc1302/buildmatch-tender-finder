@@ -1,19 +1,25 @@
 # Known Limitations
 
-- Manual Email Alert Import reads approved `.eml` files only. It does not connect directly to Gmail, Outlook, or IMAP in this patch.
-- TENDER_FINDER does not move or delete user email files during dry-run or normal runs.
-- Some tender emails may still lack contact details or exact closing dates if the portal email itself does not expose them.
-- BC Bid live access can still be affected by browser-check or CAPTCHA behavior on the public site.
-- A historical Vancouver permit without the persisted `keyword_scoring_text`
-  snapshot can refresh score and labels, but its old source-specific tier is
-  retained and explicitly marked as a legacy exception. Newly collected rows
-  persist the snapshot and are fully recalculated.
-- A source using the `custom` adapter may be saved as a disabled draft, but it
-  cannot be enabled until a compatible parser adapter is implemented.
-- Live public pages can change structure, block automation, or expose no open
-  opportunities. Source tests report those conditions; they do not prove that
-  a portal will remain available later.
-- The application is a single-user Windows desktop/Excel workflow. It has no
-  hosted web UI, database-backed multi-user state, or automatic BuildMatch/
-  Neon synchronization in this release.
-- `processed` and `rejected` email folders are created for clarity and future options, but TENDER_FINDER does not copy messages into them automatically.
+- This is an internal weekly Windows/Python beta, not production-ready and not
+  a self-contained executable. First launch installs dependencies.
+- Many of the 39 configured source rows are not currently live-verified.
+  Configured, enabled, fixture-tested, and verified-live counts are separate.
+- Public pages can change structure, block automation, or expose zero current
+  opportunities. A test proves only the source and timestamp recorded.
+- BC Bid may present a browser check/CAPTCHA. Tender Finder does not bypass or
+  solve it and reports that source as unavailable for the run.
+- Manual Email Alert Intake reads approved local `.eml` files. Gmail/Outlook
+  OAuth and IMAP are not implemented; source messages are never moved/deleted.
+- An adapter-level fixture proves shared parser behavior, not every source that
+  uses that adapter. Missing source-specific fixtures are not mislabeled PASS.
+- A disabled `custom` source draft cannot run until a compatible code adapter
+  is implemented.
+- A historical Vancouver permit without sufficient persisted raw scoring text
+  retains its source-specific legacy permit tier, visibly audited. New and
+  replayable records with snapshots are recomputed.
+- Never-persisted tender candidates cannot be retroactively rescored; newly
+  parsed candidates always use the current effective keywords.
+- `01 Code/tenderfinder_agent2.py` is frozen legacy code and remains outside the
+  GUI/engine pipeline.
+- BuildMatch/Neon synchronization, multi-user state, scheduling, and a hosted
+  web UI are not implemented. The JSON engine boundary is future-facing only.

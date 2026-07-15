@@ -1,0 +1,18 @@
+{
+  "item": {
+    "id": "fixtureitem123",
+    "title": "Development Activity Status",
+    "url": "https://services1.arcgis.com/example/arcgis/rest/services/Development_Activity/FeatureServer"
+  },
+  "features": [
+    {
+      "attributes": {
+        "APPLICATION_NO": "RZ-2026-002",
+        "ADDRESS": "200 Example Street",
+        "DESCRIPTION": "Rezoning for civil servicing and a new access road",
+        "STATUS": "Third Reading",
+        "APPLICANT": "Example Communities"
+      }
+    }
+  ]
+}

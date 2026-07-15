@@ -272,8 +272,56 @@ def test_email_and_source_tabs_have_reachable_buttons() -> None:
         for button in source_manager_buttons:
             assert button.winfo_exists()
             assert button.winfo_ismapped() == 1
+        assert app.validate_sources_button.cget("text") == "Validate Configuration"
+        assert app.test_source_offline_button.cget("text") == "Offline Parser Test"
+        assert app.test_source_live_button.cget("text") == "Live Source Test"
         assert app.source_tree.winfo_exists()
         assert len(app.source_tree.get_children()) == 39
+        assert "27 runtime-eligible" in app.source_manager_status_var.get()
+        assert "1 verified live" in app.source_manager_status_var.get()
+        gui_source = Path(g.__file__).read_text(encoding="utf-8")
+        for editable_field in (
+            "layer_index",
+            "layer_keywords",
+            "test_query_where",
+            "test_query_order_by",
+        ):
+            assert f'(\"{editable_field}\",' in gui_source
+    finally:
+        try:
+            app.root.destroy()
+        except Exception:
+            pass
+
+
+def test_keywords_tab_is_visible_complete_and_truthful() -> None:
+    app = g.TenderFinderLauncherApp()
+    try:
+        app.root.geometry("1366x768")
+        app.notebook.select(app.keywords_tab)
+        app.root.update()
+        assert app.notebook.tab(app.keywords_tab, "text") == "Keywords"
+        buttons = [
+            app.open_keywords_workbook_button,
+            app.open_keywords_folder_button,
+            app.keywords_validate_button,
+            app.reload_keywords_button,
+            app.view_keywords_instructions_button,
+        ]
+        assert [button.cget("text") for button in buttons] == [
+            "Open Keywords Workbook",
+            "Open Keywords Folder",
+            "Validate Keywords",
+            "Reload Keywords",
+            "View Instructions",
+        ]
+        assert all(button.winfo_ismapped() == 1 for button in buttons)
+        assert app.keywords_presence_var.get() == "PRESENT"
+        assert "VALID" in app.keywords_validation_status_var.get()
+        assert "Active: 227" in app.keywords_counts_var.get()
+        assert "Inactive: 0" in app.keywords_counts_var.get()
+        assert "CANONICAL" in app.keywords_effective_var.get()
+        assert app.keywords_errors_var.get() == "None."
     finally:
         try:
             app.root.destroy()
@@ -519,7 +567,7 @@ def test_auto_open_workbook_failure_does_not_crash() -> None:
             pass
 
 
-def test_worker_success_end_to_end() -> None:
+def test_worker_success_end_to_end() -> bool | None:
     """Runs the real demo builder in fast mode (~15s per the GUI's own
     label, though observed closer to ~100s for the current large review
     workbook - see AUTONOMOUS_FIXES.md) via DemoBuildWorker, exactly as
@@ -527,7 +575,7 @@ def test_worker_success_end_to_end() -> None:
     result parsing against the real output files."""
     if not RUN_GUI_E2E:
         print("[SKIP] test_worker_success_end_to_end (TENDER_FINDER_GUI_SKIP_E2E set)")
-        return
+        return False
     out_dir = g.default_output_dir()
     cmd = g.build_demo_command(g.DEFAULT_REVIEW_XLSX, out_dir, fast_mode=True)
     worker = g.DemoBuildWorker(cmd, out_dir)
@@ -556,6 +604,7 @@ def test_worker_success_end_to_end() -> None:
     assert stage_progress.exists()
     payload = json.loads(stage_progress.read_text(encoding="utf-8"))
     assert "completed" in payload.get("stages", [])
+    return True
 
 
 def main() -> int:
@@ -576,6 +625,7 @@ def main() -> int:
         test_open_path_helper_is_platform_aware,
         test_primary_buttons_visible_on_launch,
         test_email_and_source_tabs_have_reachable_buttons,
+        test_keywords_tab_is_visible_complete_and_truthful,
         test_terminate_process_tree_real_process,
         test_worker_cancel_stops_real_subprocess,
         test_on_close_requested_confirms_and_stops_running_build,
@@ -585,7 +635,9 @@ def main() -> int:
         test_worker_success_end_to_end,
     ]
     for test in tests:
-        test()
+        outcome = test()
+        if outcome is False:
+            continue
         print(f"[PASS] {test.__name__}")
     print("Launcher GUI logic test: PASS")
     return 0

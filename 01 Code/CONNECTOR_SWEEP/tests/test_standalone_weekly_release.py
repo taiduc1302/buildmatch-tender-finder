@@ -132,8 +132,8 @@ def test_source_registry_crud_fixture_preview_and_restore() -> None:
         )
         assert preview["passed"] is True
         assert preview["network_used"] is False
-        assert preview["status"] == "PASS_FIXTURE_RSS"
-        assert preview["candidates"] == 1
+        assert preview["status_code"] == "PASS_ADAPTER_FIXTURE"
+        assert preview["candidate_count"] == 1
         assert preview["normalized_preview"][0]["source_id"] == "fixture_rss_source"
         assert "Watermain Replacement" in preview["normalized_preview"][0]["tender_title"]
 
@@ -159,7 +159,7 @@ def test_source_registry_crud_fixture_preview_and_restore() -> None:
         draft_result = test_source_definition(
             "incomplete_source_draft", root=REPO_ROOT, sources_path=registry
         )
-        assert draft_result["status"] == "DRAFT_INCOMPLETE"
+        assert draft_result["status_code"] == "DRAFT_INCOMPLETE"
         assert draft_result["passed"] is False
         try:
             set_source_active("incomplete_source_draft", True, registry)
@@ -175,7 +175,7 @@ def test_source_registry_crud_fixture_preview_and_restore() -> None:
         custom_result = test_source_definition(
             "custom_portal_draft", root=REPO_ROOT, sources_path=registry
         )
-        assert custom_result["status"] == "CUSTOM_ADAPTER_REQUIRED"
+        assert custom_result["status_code"] == "CUSTOM_ADAPTER_REQUIRED"
         try:
             set_source_active("custom_portal_draft", True, registry)
         except SourceRegistryError as exc:
@@ -189,7 +189,7 @@ def test_source_registry_crud_fixture_preview_and_restore() -> None:
                 registry,
             )
         except SourceRegistryError as exc:
-            assert "public http(s) URL" in str(exc)
+            assert "non-public address" in str(exc)
         else:
             raise AssertionError("private-network source URL was accepted")
 
@@ -389,13 +389,49 @@ def test_engine_and_agent2_remain_isolated() -> None:
     assert "import tenderfinder_agent2" not in launcher_text
     assert "from tenderfinder_agent2" not in launcher_text
     assert "tenderfinder_keywords_config" not in agent_text
-    assert registry_summary(root=REPO_ROOT) == {
-        "path": str((REPO_ROOT / "config" / "sources.csv").resolve()),
-        "total": 39,
-        "active": 39,
-        "tender": 21,
-        "development": 18,
-    }
+    summary = registry_summary(root=REPO_ROOT)
+    assert summary["path"] == str((REPO_ROOT / "config" / "sources.csv").resolve())
+    assert summary["total"] == 39
+    assert summary["enabled"] == 39
+    assert summary["runtime_eligible"] == 27
+    assert summary["verified_live"] == 1
+    assert summary["ready_for_live_test"] == 26
+    assert summary["tender"] == 21
+    assert summary["development"] == 18
+
+
+def test_master_template_selection_is_package_isolated() -> None:
+    old_root = demo.ROOT
+    old_history = demo.DEMO_HISTORY_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            package = base / "current_package"
+            other_install = base / "other_install"
+            local_master = (
+                package
+                / "00 Master"
+                / "TENDER_FINDER_Tender_Intelligence_Working_Master_TEMPLATE_v1.xlsx"
+            )
+            foreign_master = (
+                other_install
+                / "00 Master"
+                / "TENDER_FINDER_Tender_Intelligence_Working_Master_TEMPLATE_v9.xlsx"
+            )
+            local_master.parent.mkdir(parents=True)
+            foreign_master.parent.mkdir(parents=True)
+            local_master.write_bytes(b"current package template")
+            foreign_master.write_bytes(b"newer foreign install template")
+            os.utime(local_master, (1_000, 1_000))
+            os.utime(foreign_master, (2_000, 2_000))
+
+            demo.ROOT = package
+            demo.DEMO_HISTORY_DIR = package / "history"
+            selected = demo.find_latest_master_workbook(extra_dirs=[other_install])
+            assert selected == local_master.resolve()
+    finally:
+        demo.ROOT = old_root
+        demo.DEMO_HISTORY_DIR = old_history
 
 
 def main() -> int:
@@ -406,6 +442,7 @@ def main() -> int:
         test_vancouver_snapshot_recomputes_and_legacy_is_explicit,
         test_manual_triage_audit_and_weekly_log_survive,
         test_engine_and_agent2_remain_isolated,
+        test_master_template_selection_is_package_isolated,
     ]
     for test in tests:
         test()

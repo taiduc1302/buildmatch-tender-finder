@@ -53,6 +53,7 @@ try:
     import tenderfinder_guards as G
 except ImportError:
     G = None  # graceful fallback for unit testing outside CONNECTOR_SWEEP/
+from tenderfinder_url_safety import safe_requests_request, safe_urllib_fetch
 
 # ---------------------------------------------------------------------------
 # Surrey source URLs (public, no login required)
@@ -106,12 +107,22 @@ CIVIL_KEYWORDS = [
 def _http_get_bytes(url, timeout=30):
     """Return raw bytes from a URL."""
     if _HAVE_REQUESTS:
-        r = requests.get(url, headers={"User-Agent": UA}, timeout=timeout)
+        fetched = safe_requests_request(
+            "GET",
+            url,
+            request_callable=requests.request,
+            headers={"User-Agent": UA},
+            timeout=timeout,
+        )
+        r = fetched.response
         r.raise_for_status()
         return r.content
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+    return safe_urllib_fetch(
+        url,
+        headers={"User-Agent": UA},
+        timeout=timeout,
+        max_bytes=20_000_000,
+    ).body
 
 
 # ---------------------------------------------------------------------------

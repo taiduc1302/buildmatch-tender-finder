@@ -7,28 +7,28 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from tenderfinder_url_safety import safe_urllib_fetch
+
 
 REST_RE = re.compile(r"https?://[^\s\"'<>]+?/(?:FeatureServer|MapServer)(?:/\d+)?", re.I)
 HEADERS = {"User-Agent": "TENDER_FINDER-Patch59-Probe/1.0"}
 
 
 def fetch(url: str, timeout: int = 12, verify: bool = True) -> str:
-    req = urllib.request.Request(url, headers=HEADERS)
-    ctx = None if verify else ssl._create_unverified_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        return resp.read().decode("utf-8", "replace")
+    if not verify:
+        raise RuntimeError("TLS certificate verification cannot be disabled")
+    return safe_urllib_fetch(
+        url,
+        headers=HEADERS,
+        timeout=timeout,
+        max_bytes=10_000_000,
+    ).body.decode("utf-8", "replace")
 
 
 def safe_fetch(url: str) -> tuple[str, str]:
     try:
         return fetch(url), ""
     except Exception as exc:
-        msg = str(exc)
-        if "certificate" in msg.lower() or "ssl" in msg.lower():
-            try:
-                return fetch(url, verify=False), "verify_false_used_for_discovery"
-            except Exception as exc2:
-                return "", f"{type(exc2).__name__}: {exc2}"
         return "", f"{type(exc).__name__}: {exc}"
 
 

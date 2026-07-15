@@ -1,103 +1,63 @@
-# Getting Started with TENDER_FINDER Tender Intelligence
+# Getting Started with Tender Finder
 
-This is the plain-English version. If you can double-click a file on
-Windows, you can run TENDER_FINDER.
+Tender Finder is an internal weekly beta for Windows. A non-technical operator
+can launch it by double-clicking `Launch_TENDER_FINDER_GUI.bat`; no console-only
+workaround is required.
 
-## First time only: run setup
+## First launch
 
-1. Find `setup_tenderfinder_environment.bat` in the main TENDER_FINDER folder.
-2. Double-click it.
-3. A black window opens and does the following for you, automatically:
-   - Checks that Python is installed (if it isn't, it tells you exactly
-     where to download it - see "If setup says Python is missing" below).
-   - Creates a private Python environment just for TENDER_FINDER, so it can't
-     conflict with anything else on your computer.
-   - Installs the few extra packages TENDER_FINDER needs.
-   - Downloads the small web browser TENDER_FINDER uses to read BC Bid tender
-     listings. This step downloads a few hundred megabytes and can take
-     a few minutes the first time - that's expected, and it only
-     happens once.
-   - Creates a **TENDER_FINDER Tender Intelligence** shortcut on your Desktop.
-4. When you see "Setup complete", press any key to close the window.
+The launcher checks for Python 3.11+, creates `.venv`, installs
+`requirements.txt`, installs Playwright Chromium, verifies runtime imports, and
+then opens the GUI. If a step fails, the setup window shows an actionable error
+and returns non-zero. Setup never replaces the canonical repository-relative
+launcher with an absolute-path copy.
 
-This whole process typically takes 5-10 minutes depending on your
-internet connection. You only need to do it once.
+The clean ZIP deliberately has no virtual environment, so first-run internet
+access is expected. An optional Desktop shortcut points to the canonical
+launcher. If shortcut creation is unavailable, double-click the launcher in the
+program folder.
 
-### If setup says Python is missing
+## Run tab
 
-The setup window will print a download link
-(https://www.python.org/downloads/). Download and run that installer.
-**On the very first screen of the Python installer**, check the box
-labeled "Add python.exe to PATH" before clicking Install. Then run
-`setup_tenderfinder_environment.bat` again.
+- **Live Run** contacts enabled, runtime-eligible public sources. It never logs
+  in, stores portal credentials, bypasses a browser check, or solves a CAPTCHA.
+- **Offline/Test Run** reads packaged/local inputs with `--no-fetch`.
+- **Run Self-Test** uses the same authoritative offline runner as
+  `verify_package.bat` and shows separate PASS/FAIL/SKIP/excluded/no-fixture
+  totals.
 
-### If no Desktop shortcut appears
+The output path and resulting manifest/workbook paths remain visible. Stop
+terminates the process tree and marks partial output; Pause stops at a safe
+stage boundary; Resume recomputes into the same output folder rather than
+pretending an unsafe mid-stage continuation occurred. Closing during a run
+requires confirmation and stops child processes cleanly.
 
-Some computers don't allow shortcuts to be placed on the Desktop
-automatically. If that happens, setup tells you so at the end and
-points you to `Launch_TENDER_FINDER_GUI.bat` in the main TENDER_FINDER folder instead -
-double-click that file any time you want to run TENDER_FINDER. It works exactly
-the same as the Desktop shortcut.
+## Keywords tab
 
-## Every time after that: just run it
+Use **Open Keywords Workbook**, save edits in `config\keywords.xlsx`, then
+select **Validate Keywords** and **Reload Keywords**. The tab shows canonical
+and effective paths, validation time, active/inactive counts, categories,
+errors, and external last-known-good status.
 
-Double-click the **TENDER_FINDER Tender Intelligence** shortcut on your Desktop
-(or `Launch_TENDER_FINDER_GUI.bat` in the TENDER_FINDER folder if you don't have the
-Desktop shortcut).
+`RESCORE_ALWAYS` means current effective rules govern current score, tier,
+gate, label, and bucket. Check `Keyword_Change_Audit` for visible old/new
+changes. Manual `Status`, `Notes`, `Assigned To`, and Weekly Review Log data are
+preserved by stable ID.
 
-A window opens with three things to check:
+## Source Checks
 
-1. **Run Mode** - leave this on "Full Live Sweep" for a normal run. Only
-   pick "Fast Mode" if you just want to re-check existing leads without
-   waiting for live tender sites to load (useful on slow internet).
-2. **Output Folder** - where TENDER_FINDER saves the results. The default is
-   fine for most people; click "Browse..." if you want to choose a
-   different folder.
-3. **Run TENDER_FINDER Sweep** - click this to start.
+The table comes from `config\sources.csv` and displays operational status and
+last test metadata. Configuration validation, offline parser testing, and
+explicit one-source live testing are separate actions. A missing fixture is
+reported as not tested, not PASS; only a structured live test can assign
+`verified_live`.
 
-While TENDER_FINDER runs, the Current Step area and color-coded log show what
-it's doing. This takes a few minutes for a full sweep. When it
-finishes, the Last Run Result panel shows the headline numbers, and
-two buttons unlock:
+## Runtime locations
 
-- **Open Output Folder** - opens the folder with all the result files.
-- **Open Results Workbook** - opens the results spreadsheet directly.
+Normal outputs and mutable state are outside the program folder beneath
+`C:\tenderfinder_out` (or an explicitly selected external output root). This
+includes run history, logs/manifests, email state, registry backups, keyword
+validation/LKG state, browser state, screenshots, and Self-Test artifacts.
 
-**Stop / Pause / Resume:** while a build runs you can click **Stop**
-(terminates the build and any browser it opened; output produced so
-far stays on disk, clearly marked as partial) or **Pause** (TENDER_FINDER
-finishes its current stage - it never cuts a file off mid-write - then
-stops at a safe checkpoint). **Resume** continues after a pause; to be
-honest about it: stages before the workbook can't skip ahead safely,
-so Resume restarts the build from the beginning into the same folder.
-
-**If TENDER_FINDER can't find the reviewed-leads workbook** (for example, on a
-new computer), it doesn't just fail - it explains what it needs, lets
-you browse for the file, and remembers your choice for future runs.
-
-If something goes wrong, TENDER_FINDER shows an error message explaining what
-happened and tells you where the full error log was saved, instead of
-just freezing or closing silently.
-
-If you close the window while a build is still running, TENDER_FINDER asks you
-to confirm first, then stops the build cleanly (including the small web
-browser it may have opened for BC Bid) rather than leaving anything
-running in the background.
-
-**BC Bid browser check:** BC Bid sometimes shows an automated
-browser-check page. When that happens, TENDER_FINDER opens a visible browser
-window to BC Bid's public page and waits up to 5 minutes for you to
-let it finish loading (completing any CAPTCHA yourself - TENDER_FINDER never
-logs in or solves one for you). The GUI shows a clear "action needed"
-message and a **Continue After Browser Check** button - click it once
-the page has loaded and TENDER_FINDER re-checks immediately. If the check isn't
-completed in time, the run reports it honestly ("BC Bid was not read
-this run") instead of pretending BC Bid had nothing. Every other
-tender source in that run is unaffected.
-
-## Command-line alternative
-
-If you prefer not to use the GUI, `run_tenderfinder_demo.bat` (full sweep) and
-`run_tenderfinder_demo_fast.bat` (fast mode) in the main TENDER_FINDER folder do the same
-thing without opening a window with buttons - just double-click and
-watch the console output.
+The editable source configuration files remain in `config\`; keep ordinary
+backups before large manual edits.

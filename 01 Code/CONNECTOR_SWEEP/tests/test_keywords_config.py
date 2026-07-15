@@ -21,6 +21,8 @@ from tenderfinder_keywords_config import (  # noqa: E402
     KeywordConfigError,
     KeywordRule,
     clear_keywords_cache,
+    inspect_last_known_good,
+    keyword_state_paths,
     load_keywords_config,
 )
 
@@ -134,6 +136,7 @@ def test_keywords_row_overrides_profile_rule() -> None:
 def test_duplicate_and_bad_regex_are_hard_errors() -> None:
     with tempfile.TemporaryDirectory() as temp:
         folder = Path(temp)
+        state_root = folder / "state"
         duplicate = folder / "duplicate.xlsx"
         _minimal_workbook(
             duplicate,
@@ -143,7 +146,7 @@ def test_duplicate_and_bad_regex_are_hard_errors() -> None:
             ],
         )
         try:
-            load_keywords_config(duplicate, force_reload=True)
+            load_keywords_config(duplicate, force_reload=True, state_root=state_root)
         except KeywordConfigError as exc:
             assert "duplicate (keyword, category)" in str(exc)
         else:
@@ -155,10 +158,15 @@ def test_duplicate_and_bad_regex_are_hard_errors() -> None:
             [["(", "regex", 0, "tender_match", "broken", "Y", ""]],
         )
         try:
-            load_keywords_config(bad_regex, force_reload=True)
+            load_keywords_config(bad_regex, force_reload=True, state_root=state_root)
         except KeywordConfigError as exc:
             assert "invalid regex" in str(exc)
-            assert (folder / "keywords_validation_last.txt").exists()
+            report = keyword_state_paths(
+                root=PACKAGE_ROOT,
+                state_root=state_root,
+            ).validation_report
+            assert report.exists()
+            assert PACKAGE_ROOT not in report.parents
         else:
             raise AssertionError("invalid regex did not stop validation")
 
@@ -180,7 +188,7 @@ def test_malformed_weight_and_active_report_sheet_row() -> None:
             raise AssertionError("malformed weight/active values did not stop validation")
 
 
-def test_missing_workbook_has_no_fallback() -> None:
+def test_missing_custom_workbook_has_no_implicit_fallback() -> None:
     with tempfile.TemporaryDirectory() as temp:
         missing = Path(temp) / "keywords.xlsx"
         try:
@@ -192,6 +200,52 @@ def test_missing_workbook_has_no_fallback() -> None:
             assert "as keywords.xlsx" in message
         else:
             raise AssertionError("missing workbook unexpectedly loaded")
+
+
+def test_last_known_good_fallback_is_external_verified_and_visible() -> None:
+    with tempfile.TemporaryDirectory() as temp:
+        folder = Path(temp)
+        canonical = folder / "keywords.xlsx"
+        state_root = folder / "state"
+        shutil.copy2(LIVE, canonical)
+        clear_keywords_cache()
+
+        first = load_keywords_config(
+            canonical,
+            root=PACKAGE_ROOT,
+            state_root=state_root,
+            force_reload=True,
+            allow_last_known_good=True,
+        )
+        assert first.source_kind == "canonical"
+        assert first.last_known_good_status == "ready"
+        assert first.last_known_good_path is not None
+        assert first.last_known_good_path.exists()
+        assert PACKAGE_ROOT not in first.last_known_good_path.parents
+        assert first.active_keyword_count == 227
+
+        canonical.unlink()
+        fallback = load_keywords_config(
+            canonical,
+            root=PACKAGE_ROOT,
+            state_root=state_root,
+            force_reload=True,
+            allow_last_known_good=True,
+        )
+        assert fallback.source_kind == "last_known_good"
+        assert fallback.requested_path == canonical.resolve()
+        assert fallback.path == first.last_known_good_path
+        assert fallback.last_known_good_status == "in_use"
+        assert fallback.active_keyword_count == 227
+        assert any("Workbook is missing" in error for error in fallback.validation_errors)
+
+        status = inspect_last_known_good(
+            canonical,
+            root=PACKAGE_ROOT,
+            state_root=state_root,
+        )
+        assert status["status"] == "ready"
+        assert status["saved_at"]
 
 
 def test_cache_is_stable_until_explicit_reload() -> None:
@@ -217,6 +271,11 @@ def test_gui_helpers_are_headless_and_read_live_config() -> None:
     result = gui.validate_keywords_for_gui(PACKAGE_ROOT, force_reload=True)
     assert result["company_name"] == "Tybo Contracting"
     assert result["active_keyword_count"] == 227
+    assert result["inactive_keyword_count"] == 0
+    assert len(result["category_counts"]) == 12
+    assert result["source_kind"] == "canonical"
+    assert result["last_known_good_status"] == "ready"
+    assert result["validation_errors"] == []
     assert result["rescore_semantics"].startswith("Scores, gates, labels, and bucket routing always reflect current keywords.xlsx")
     assert "legacy_vancouver_scoring_text_unavailable" in result["rescore_exceptions"]
     assert "tenderfinder_agent2.py remains isolated/static" in result["rescore_exceptions"]
@@ -240,7 +299,8 @@ def main() -> int:
         test_keywords_row_overrides_profile_rule,
         test_duplicate_and_bad_regex_are_hard_errors,
         test_malformed_weight_and_active_report_sheet_row,
-        test_missing_workbook_has_no_fallback,
+        test_missing_custom_workbook_has_no_implicit_fallback,
+        test_last_known_good_fallback_is_external_verified_and_visible,
         test_cache_is_stable_until_explicit_reload,
         test_gui_helpers_are_headless_and_read_live_config,
         test_validation_does_not_modify_live_workbook,

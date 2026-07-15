@@ -10,6 +10,8 @@ This module intentionally does not write Future_Projects or Rejected_Archive.
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+from tenderfinder_excel_safety import append_untrusted_row
+
 BULK_SHEET = "Bulk_Intake_Raw"
 
 BULK_COLUMNS = [
@@ -67,6 +69,6 @@ def append_bulk_rows(wb, rows):
     ws = ensure_bulk_sheet(wb)
     before = max(0, ws.max_row - 1)
     for row in rows:
-        ws.append([row.get(col, "") for col in BULK_COLUMNS])
+        append_untrusted_row(ws, [row.get(col, "") for col in BULK_COLUMNS])
     after = max(0, ws.max_row - 1)
     return {"appended": after - before, "final_rows": after}

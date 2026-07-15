@@ -61,10 +61,17 @@ from tenderfinder_source_backlog import (
 )
 from tenderfinder_source_registry import SourceRegistryError, load_tender_sources
 from tenderfinder_runtime import RuntimeStateError, runtime_paths
+from tenderfinder_excel_safety import append_untrusted_row, safe_untrusted_excel_value
 from tenderfinder_keywords_config import (
     KeywordConfigError,
     load_keywords_config,
     print_validation_summary,
+)
+from tenderfinder_url_safety import (
+    URLSafetyError,
+    install_playwright_public_route,
+    safe_urllib_fetch,
+    validate_public_url,
 )
 import tenderfinder_guards as G
 
@@ -927,8 +934,13 @@ def arcgis_query_paged(
     return rows
 
 
-def load_address_enrichment() -> dict[str, dict[str, dict[str, Any]]]:
+def load_address_enrichment(
+    *,
+    allow_network: bool = False,
+) -> dict[str, dict[str, dict[str, Any]]]:
     enrichments: dict[str, dict[str, dict[str, Any]]] = {"surrey_devapps_v2": {}, "abbotsford_devapps": {}}
+    if not allow_network:
+        return enrichments
     try:
         enrichments["surrey_devapps_v2"] = arcgis_query_paged(
             SURREY_V2_LAYER,
@@ -1279,6 +1291,20 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
     }
     row["detail_available"] = "YES" if is_detail_available(row["scope_summary"]) else "NO"
     row["signal_quality"] = signal_quality_for(row)
+    if source_id != "van_building_permits":
+        old_tier = (
+            signal_quality_for(
+                {
+                    "fit_score": stored_score,
+                    "status_class": status_class,
+                    "app_type_stage": stage,
+                    "source_id": source_id,
+                }
+            )
+            if stored_score is not None
+            else ""
+        )
+        new_tier = row["signal_quality"]
     row["source_tier"] = source_tier_for(source_id)
     row["project_scale_tier"] = project_scale_tier(row)
     row["regional_cluster"] = regional_cluster(row["municipality"])
@@ -1335,14 +1361,14 @@ def source_tier_for(source_id: str) -> str:
     return "TIER_3"
 
 
-def read_track_a(review_xlsx: Path) -> DemoData:
+def read_track_a(review_xlsx: Path, *, allow_network_enrichment: bool = False) -> DemoData:
     start = time.perf_counter()
     wb = openpyxl.load_workbook(review_xlsx, read_only=True, data_only=True)
     ws = wb.active
     rows = ws.iter_rows(values_only=True)
     headers = [str(h or "") for h in next(rows)]
     data = DemoData()
-    enrichments = load_address_enrichment()
+    enrichments = load_address_enrichment(allow_network=allow_network_enrichment)
 
     for values in rows:
         raw = dict(zip(headers, values))
@@ -1631,17 +1657,27 @@ def fetch_url(url: str, timeout: int = 20, retries: int = 1) -> tuple[str, int, 
     current = url
     for attempt in range(retries + 1):
         try:
-            req = urllib.request.Request(current, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-                raw = resp.read(2_000_000)
-                content_type = resp.headers.get("content-type", "")
-                charset = resp.headers.get_content_charset() or "utf-8"
-                return raw.decode(charset, errors="replace"), int(resp.status), content_type, resp.geturl()
+            fetched = safe_urllib_fetch(
+                current,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=2_000_000,
+                context=ctx,
+            )
+            content_type = fetched.headers.get("content-type", "")
+            charset_getter = getattr(fetched.headers, "get_content_charset", None)
+            charset = (charset_getter() if callable(charset_getter) else None) or "utf-8"
+            return (
+                fetched.body.decode(charset, errors="replace"),
+                fetched.status,
+                content_type,
+                fetched.final_url,
+            )
         except urllib.error.HTTPError as e:
             if e.code in {403, 429, 404}:
                 return "", e.code, e.headers.get("content-type", ""), current
             last_error = f"HTTP {e.code}"
-        except (urllib.error.URLError, TimeoutError, socket.timeout) as e:
+        except (urllib.error.URLError, TimeoutError, socket.timeout, URLSafetyError) as e:
             last_error = str(e)
         if attempt < retries:
             time.sleep(0.4 * (attempt + 1))
@@ -2305,13 +2341,23 @@ def bc_bid_static_asset(url: str) -> bool:
 
 
 def http_fetch_with_headers(url: str, headers: dict[str, str], timeout: int = 20) -> tuple[str, int, str, str]:
-    req = urllib.request.Request(url, headers=headers)
     ctx = ssl.create_default_context()
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        raw = resp.read(1_000_000)
-        content_type = resp.headers.get("content-type", "")
-        charset = resp.headers.get_content_charset() or "utf-8"
-        return raw.decode(charset, errors="replace"), int(resp.status), content_type, resp.geturl()
+    fetched = safe_urllib_fetch(
+        url,
+        headers=headers,
+        timeout=timeout,
+        max_bytes=1_000_000,
+        context=ctx,
+    )
+    content_type = fetched.headers.get("content-type", "")
+    charset_getter = getattr(fetched.headers, "get_content_charset", None)
+    charset = (charset_getter() if callable(charset_getter) else None) or "utf-8"
+    return (
+        fetched.body.decode(charset, errors="replace"),
+        fetched.status,
+        content_type,
+        fetched.final_url,
+    )
 
 
 def bc_bid_cookie_headers(audit: dict[str, Any]) -> dict[str, str]:
@@ -2467,6 +2513,14 @@ def run_bc_bid_browser_audit() -> dict[str, Any]:
             return audit
 
         context = browser.new_context(user_agent=BCBID_BROWSER_UA)
+        audit["blocked_network_requests"] = []
+
+        def on_blocked_url(url: str, reason: str) -> None:
+            audit["blocked_network_requests"].append(
+                {"url": clean_text(url, 300), "reason": clean_text(reason, 300)}
+            )
+
+        install_playwright_public_route(context, on_blocked=on_blocked_url)
         page = context.new_page()
 
         def on_request(req: Any) -> None:
@@ -2514,6 +2568,7 @@ def run_bc_bid_browser_audit() -> dict[str, Any]:
         page.on("response", on_response)
         for attempt in range(2):
             try:
+                validate_public_url(BCBID_PUBLIC_URL)
                 page.goto(BCBID_PUBLIC_URL, wait_until="networkidle", timeout=20_000)
             except Exception as exc:
                 audit["errors"].append(f"goto_{attempt + 1}: {clean_text(exc, 240)}")
@@ -2528,6 +2583,10 @@ def run_bc_bid_browser_audit() -> dict[str, Any]:
             except Exception:
                 pass
         audit["final_url"] = page.url
+        try:
+            validate_public_url(audit["final_url"])
+        except URLSafetyError as exc:
+            audit["errors"].append(f"unsafe_final_url: {clean_text(exc, 240)}")
         try:
             audit["title"] = page.title()
         except Exception as exc:
@@ -2728,8 +2787,17 @@ def run_bc_bid_user_assisted_browser_audit(wait_timeout_seconds: int | None = No
                 return audit
 
             try:
+                audit["blocked_network_requests"] = []
+
+                def on_blocked_url(url: str, reason: str) -> None:
+                    audit["blocked_network_requests"].append(
+                        {"url": clean_text(url, 300), "reason": clean_text(reason, 300)}
+                    )
+
+                install_playwright_public_route(context, on_blocked=on_blocked_url)
                 page = context.pages[0] if context.pages else context.new_page()
                 try:
+                    validate_public_url(BCBID_PUBLIC_URL)
                     page.goto(BCBID_PUBLIC_URL, wait_until="domcontentloaded", timeout=20_000)
                 except Exception as exc:
                     audit["errors"].append(f"goto: {clean_text(exc, 240)}")
@@ -2776,6 +2844,10 @@ def run_bc_bid_user_assisted_browser_audit(wait_timeout_seconds: int | None = No
                         signal_file.unlink(missing_ok=True)
 
                 audit["final_url"] = page.url
+                try:
+                    validate_public_url(audit["final_url"])
+                except URLSafetyError as exc:
+                    audit["errors"].append(f"unsafe_final_url: {clean_text(exc, 240)}")
                 try:
                     audit["title"] = page.title()
                 except Exception:
@@ -3042,6 +3114,19 @@ def sweep_source(source: dict[str, Any]) -> SourceSweepResult:
     source_candidates: list[TenderCandidate] = []
     last_http_status = 0
     raw_links_found = 0
+
+    runtime_skip_reason = str(source.get("runtime_skip_reason") or "").strip()
+    if runtime_skip_reason:
+        return SourceSweepResult([], SourceLog(
+            source_id=source["source_id"],
+            source_name=source["name"],
+            url=source["url"],
+            status="SKIPPED_SOURCE_STATUS",
+            source_type=infer_source_type(source["source_id"], source["url"]),
+            source_opened=False,
+            elapsed_seconds=time.perf_counter() - s0,
+            note=runtime_skip_reason,
+        ))
 
     if source["source_id"] == "bc_bid_public":
         return sweep_bc_bid_public(source)
@@ -3461,7 +3546,7 @@ def write_rows(ws, headers: list[str], rows: list[list[Any]], note: str | None =
     for row_index, row in enumerate(rows, start_row + 1):
         for col, value in enumerate(row, 1):
             value = scrub_currency_values(value)
-            cell = ws.cell(row_index, col, value)
+            cell = ws.cell(row_index, col, safe_untrusted_excel_value(value))
             cell.font = Font(name="Arial", size=10)
             cell.alignment = Alignment(vertical="top", wrap_text=True)
     ws.freeze_panes = f"A{start_row + 1}"
@@ -4014,7 +4099,7 @@ def build_workbook(out_path: Path, data: DemoData, tenders: list[TenderCandidate
         *how_to_read_rows(data),
     ]
     for row in summary_rows:
-        ws.append(row)
+        append_untrusted_row(ws, row)
     style_summary(ws)
 
     # VP-facing one-pager, deliberately the SECOND tab so the source
@@ -5278,16 +5363,19 @@ def _bounded_glob_master_workbooks(base: Path, max_depth: int) -> list[Path]:
 def find_latest_master_workbook(extra_dirs: list[Path] | None = None) -> Path:
     """Locate the latest TENDER_FINDER_Tender_Intelligence_Working_Master_*.xlsx.
 
-    Searches recursively under the project root, its parent, C:\\tenderfinder_out
-    (if present), and known output/archive folders already used by this
-    script. Excel lock files ("~$...") are always ignored. The newest file
-    by modified timestamp wins; ties are broken by the newest sortable
-    version/timestamp token in the filename.
+    A valid workbook inside this package wins before any external fallback.
+    This prevents a checkout or moved installation from silently using a
+    newer template copied into another Tender Finder installation under
+    C:\\tenderfinder_out. Only when this package has no candidate do we search
+    its parent, C:\\tenderfinder_out, explicit extra directories, and known
+    output/archive folders. Excel lock files ("~$...") are always ignored.
+    Within one scope, the newest file by modified timestamp wins; ties are
+    broken by the newest sortable version/timestamp token in the filename.
 
     Raises FileNotFoundError with a clear, actionable message if nothing is
     found - this function must never fabricate an empty master workbook.
     """
-    search_roots: list[Path] = [ROOT]
+    search_roots: list[Path] = []
     tenderfinder_out = Path("C:/tenderfinder_out")
     if tenderfinder_out.exists():
         search_roots.append(tenderfinder_out)
@@ -5300,7 +5388,8 @@ def find_latest_master_workbook(extra_dirs: list[Path] | None = None) -> Path:
     seen_roots: set[Path] = set()
     candidates: set[Path] = set()
 
-    def _collect(paths) -> None:
+    def _collect(paths, destination: set[Path] | None = None) -> None:
+        target = candidates if destination is None else destination
         for path in paths:
             if path.name.startswith("~$"):
                 continue
@@ -5308,7 +5397,26 @@ def find_latest_master_workbook(extra_dirs: list[Path] | None = None) -> Path:
                 continue
             if any(part in _SKIP_DIR_NAMES for part in path.parts):
                 continue
-            candidates.add(path.resolve())
+            target.add(path.resolve())
+
+    def _latest(paths: set[Path]) -> Path:
+        def sort_key(path: Path) -> tuple[float, str]:
+            return (path.stat().st_mtime, _sortable_version_token(path.name))
+
+        return max(paths, key=sort_key)
+
+    try:
+        package_root = ROOT.resolve()
+    except OSError:
+        package_root = ROOT
+    package_candidates: set[Path] = set()
+    if package_root.exists():
+        _collect(package_root.rglob(MASTER_WORKBOOK_GLOB), package_candidates)
+    if package_candidates:
+        latest = _latest(package_candidates)
+        print(f"MASTER_WORKBOOK_SELECTED={latest}", flush=True)
+        return latest
+    seen_roots.add(package_root)
 
     for base in search_roots:
         try:
@@ -5341,10 +5449,7 @@ def find_latest_master_workbook(extra_dirs: list[Path] | None = None) -> Path:
             "locations (e.g. the '00 Master' folder) and re-run."
         )
 
-    def sort_key(path: Path) -> tuple[float, str]:
-        return (path.stat().st_mtime, _sortable_version_token(path.name))
-
-    latest = max(candidates, key=sort_key)
+    latest = _latest(candidates)
     print(f"MASTER_WORKBOOK_SELECTED={latest}", flush=True)
     return latest
 
@@ -7504,9 +7609,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--no-fetch", action="store_true", help="Skip Track B live tender fetch.")
     ap.add_argument("--email-intake", action="store_true", help="Parse user-approved portal email alerts into BID NOW when available.")
     ap.add_argument("--email-import-path", default="", help="Optional local folder of .eml alert files to use for Email Alert Intake.")
+    ap.add_argument("--keywords-config", default="", help="Optional canonical keywords.xlsx override.")
     ap.add_argument("--sources-config", default="", help="Optional canonical sources.csv override.")
+    ap.add_argument("--source-id", action="append", default=[], help="Run only this active runtime-eligible tender source; repeat as needed.")
     ap.add_argument("--state-root", default="", help="Runtime history/state root outside the package.")
+    ap.add_argument("--keywords-state-root", default="", help="External state root for keyword validation and last-known-good snapshot.")
     ap.add_argument("--run-id", default="", help="Stable run identifier supplied by the engine service.")
+    ap.add_argument("--run-mode", choices=("live", "offline", "self_test"), default="", help="Structured engine run mode.")
     return ap.parse_args()
 
 
@@ -7514,9 +7623,13 @@ def main() -> int:
     global LAST_BC_BID_OFFICIAL_FINDINGS, TENDER_SOURCES, BCBID_PUBLIC_URL
     global BCBID_NETWORK_AUDIT_PATH, PATCH_5_18_BACKLOG_PATH, AUTONOMOUS_FIXES_PATH
     args = parse_args()
+    if args.keywords_config:
+        os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = args.keywords_config
+    if args.keywords_state_root:
+        os.environ["TENDER_FINDER_KEYWORDS_STATE_ROOT"] = args.keywords_state_root
     if args.sources_config:
         os.environ["TENDER_FINDER_SOURCES_CONFIG"] = args.sources_config
-    run_mode = os.environ.get("TENDER_FINDER_RUN_MODE", "").strip() or (
+    run_mode = args.run_mode or os.environ.get("TENDER_FINDER_RUN_MODE", "").strip() or (
         "offline" if args.no_fetch else "live"
     )
     try:
@@ -7530,6 +7643,25 @@ def main() -> int:
     except SourceRegistryError as exc:
         print(f"ERROR: {exc}", flush=True)
         return 2
+    selected_source_ids = {
+        str(source_id).strip().casefold()
+        for source_id in args.source_id
+        if str(source_id).strip()
+    }
+    if selected_source_ids:
+        available_ids = {source["source_id"] for source in TENDER_SOURCES}
+        unavailable = sorted(selected_source_ids - available_ids)
+        if unavailable:
+            print(
+                "ERROR: selected source(s) are not active runtime-eligible tender sources: "
+                + ", ".join(unavailable),
+                flush=True,
+            )
+            return 2
+        TENDER_SOURCES = [
+            source for source in TENDER_SOURCES
+            if source["source_id"] in selected_source_ids
+        ]
     BCBID_PUBLIC_URL = next(
         (source["url"] for source in TENDER_SOURCES if source["source_id"] == "bc_bid_public"),
         "",
@@ -7568,7 +7700,7 @@ def main() -> int:
     if archived_history:
         print(f"demo_history_archived_pre_5_11={[p.name for p in archived_history]}", flush=True)
     print("TENDER_FINDER_STAGE: Reading proven Track A development-project workbook", flush=True)
-    data = read_track_a(review_xlsx)
+    data = read_track_a(review_xlsx, allow_network_enrichment=not args.no_fetch)
     print(f"KEYWORDS_RESCORE_ALWAYS: {RESCORE_ALWAYS_SUMMARY}", flush=True)
     print(
         f"KEYWORDS_RESCORE_ALWAYS: rescored={len(data.keyword_rescore_events)} below_gate={len(data.keyword_below_gate)}",

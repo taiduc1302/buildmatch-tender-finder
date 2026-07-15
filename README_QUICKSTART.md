@@ -1,64 +1,54 @@
-# TENDER_FINDER Quickstart
+# Tender Finder Quickstart
 
 ## Start by double-clicking
 
-Double-click `Launch_TENDER_FINDER_GUI.bat`. On the first launch it creates a
-private `.venv`, installs the required packages, and then opens the GUI. Later
-launches open the GUI directly with `pythonw.exe` and do not leave a console
-window open.
+Double-click `Launch_TENDER_FINDER_GUI.bat`. The first launch creates `.venv`,
+installs dependencies and Playwright Chromium, then opens the GUI. This is a
+clickable Python application, not a self-contained executable; first-run setup
+needs Python 3.11+ and internet access.
 
-All generated workbooks, logs, manifests, settings, and run history are stored
-under `C:\tenderfinder_out`; normal runs do not write runtime state into this
-repository.
+All normal output and mutable state goes beneath `C:\tenderfinder_out` (or a
+selected external output root), not into the program folder.
 
 ## First safe run
 
-1. On **Run TENDER_FINDER**, click **Validate keywords**.
-2. Click **Run Self-Test**. It is strictly offline and reports honest counts
-   for passed, failed, skipped, and intentionally excluded checks.
-3. After Self-Test shows `PASS`, click **Offline/Test Run** to rebuild from
-   packaged/local inputs without contacting public sites.
-4. Use **Open Workbook** or **Open Output Folder** when the run finishes.
+1. Open **Keywords** and click **Validate Keywords**.
+2. Click **Run Self-Test** and require PASS with zero failed/no-fixture checks.
+3. Click **Offline/Test Run** to rebuild only from packaged/local inputs.
+4. Open the workbook and inspect `Keyword_Change_Audit`.
+5. Use **Live Run** only when you intend to contact enabled public sources.
 
-Use **Live Run** only when you intend to contact the enabled public sources.
-It never logs into a portal or bypasses a CAPTCHA. BC Bid may require a manual
-browser check.
+Self-Test and Offline/Test Run are network-free. Live Run never logs in or
+bypasses CAPTCHA/browser checks.
 
 ## Edit scoring rules
 
-Open `config\keywords.xlsx`, edit the `Keywords` sheet, save it, return to the
-GUI, and click **Validate keywords** before running. You can add rows, change a
-weight, set `active` to `N`, or use `contains`, `exact`, or bounded `regex`
-matching. Invalid rows stop the run with a sheet/row-specific message.
+Use **Open Keywords Workbook**, edit `config\keywords.xlsx`, save, then click
+**Validate Keywords** and **Reload Keywords**. You can add rules, change
+weights, choose `contains`/`exact`/bounded `regex`, or set `active` to `N`.
 
-TENDER_FINDER uses `RESCORE_ALWAYS`: every run recomputes scores, gates,
-labels, Vancouver signals where source data permits, tiers, and downstream
-routing from the current workbook. The `Keyword_Change_Audit` sheet shows
-stable-ID old/new score, tier, and bucket changes. Manual `Assigned To`,
-`Status`, `Notes`, and the Weekly Review Log survive rescoring.
+`RESCORE_ALWAYS` recomputes current score, tier, gate, and bucket for all
+replayable records. `Keyword_Change_Audit` shows old/new values and rule
+attribution. Manual `Status`, `Notes`, `Assigned To`, and Weekly Review Log
+entries survive. If the canonical workbook is damaged, only a verified
+external last-known-good snapshot may run, with a visible warning.
 
 ## Manage sources
 
-Open **Source Checks**. The table is backed by the one canonical registry,
-`config\sources.csv`.
+Open **Source Checks**. `config\sources.csv` is the one runtime registry.
 
-- **Add Source** creates a disabled draft.
-- **Edit Source** validates and saves atomically.
-- **Enable / Disable** controls whether a source participates in a run.
-- **Validate Registry** checks the entire file.
-- **Test Selected Offline** validates configuration or parses a configured
-  local fixture without network access.
-- **Test Selected Live** contacts only the selected public source after an
-  explicit confirmation.
+- Add/edit or enable/disable a source.
+- **Validate Configuration** checks only config and URL syntax (no parser or
+  network).
+- **Offline Parser Test** runs the adapter against a local sanitized fixture.
+- **Live Source Test** explicitly contacts only the selected public source and
+  is the only operation that can mark it `verified_live`.
 
-Built-in adapters are selectable in the editor. An unsupported website can be
-saved as a disabled `custom` draft, but it needs a code adapter before it can
-be enabled.
+Configured or enabled does not mean operational. Read the displayed status and
+last test details.
 
 ## Manual email alerts
 
-In **Email Alert Intake**, click **Create / Open Email Import Folder**, copy
-approved `.eml` files into the folder, and click **Test Email Import**. When
-the dry-run counts look right, click **Run With Email Alerts**. You can instead
-select an existing local or OneDrive folder; TENDER_FINDER never needs mailbox
-passwords and does not move or delete the source messages.
+In **Email Alerts**, create/open the import folder, copy approved `.eml` files,
+run the import test, then use the email-enabled run action. Tender Finder never
+moves/deletes source messages and stores no mailbox password.

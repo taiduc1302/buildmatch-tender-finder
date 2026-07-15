@@ -54,7 +54,10 @@ from tenderfinder_package_paths import (  # noqa: E402
 )
 from tenderfinder_keywords_config import (  # noqa: E402
     KeywordConfigError,
+    clear_keywords_cache,
+    inspect_last_known_good,
     load_keywords_config,
+    resolve_keywords_path,
     validation_summary,
 )
 from tenderfinder_engine import (  # noqa: E402
@@ -62,6 +65,7 @@ from tenderfinder_engine import (  # noqa: E402
     run_command as run_engine_command,
     run_self_test as run_engine_self_test,
     test_source_definition,
+    validate_source_definition,
     validate_runtime_configuration,
 )
 from tenderfinder_source_registry import (  # noqa: E402
@@ -73,6 +77,7 @@ from tenderfinder_source_registry import (  # noqa: E402
     registry_summary,
     resolve_registry_path,
     set_source_active,
+    source_is_runtime_eligible,
     upsert_source,
 )
 
@@ -83,7 +88,10 @@ DEFAULT_REVIEW_XLSX, _ = discover_review_xlsx(ROOT_DIR)
 if DEFAULT_REVIEW_XLSX is None:
     DEFAULT_REVIEW_XLSX = legacy_review_xlsx_path()
 
-if sys.platform.startswith("win"):
+_configured_output_root = os.environ.get("TENDER_FINDER_OUTPUT_ROOT", "").strip()
+if _configured_output_root:
+    DEFAULT_OUTPUT_ROOT = Path(_configured_output_root).expanduser().resolve()
+elif sys.platform.startswith("win"):
     DEFAULT_OUTPUT_ROOT = Path(r"C:\tenderfinder_out")
 else:
     DEFAULT_OUTPUT_ROOT = Path.home() / "tenderfinder_out"
@@ -98,10 +106,10 @@ RUN_MODE_FAST = "Offline/Test Run (no live fetch, local inputs only, ~1-2 min)"
 
 
 def expected_source_status_lines(root: Path = ROOT_DIR) -> int:
-    """Active tender sources plus the internal email-intake status line."""
+    """Runtime-eligible tender sources plus internal email-intake status."""
     try:
         rows = load_source_rows(root=root, active_only=True, track="tender")
-        return len(rows) + 1
+        return sum(source_is_runtime_eligible(row) for row in rows) + 1
     except SourceRegistryError:
         return 0
 
@@ -147,14 +155,59 @@ RESCORE_ALWAYS_EXCEPTIONS = (
     "rows that were never persisted cannot be replayed."
 )
 
+KEYWORD_CATEGORY_LABELS = {
+    "positive": "Positive fit",
+    "negative": "Negative fit",
+    "geography": "Geography",
+    "client": "Known clients",
+    "gate_include": "Civil include gate",
+    "gate_exclude": "Exclusion gate",
+    "gate_weak": "Weak terms",
+    "gate_collision": "Collision protection",
+    "label_civil": "Civil labels",
+    "van_signal_primary": "Vancouver primary signals",
+    "van_signal_secondary": "Vancouver secondary signals",
+    "tender_match": "Tender language",
+}
+SOURCE_EDITABLE_OPERATIONAL_STATUSES = (
+    "needs_configuration",
+    "ready_for_live_test",
+    "config_valid_only",
+    "manual_only",
+    "blocked",
+    "wrong_source",
+    "deprecated",
+)
+
 
 def validate_keywords_for_gui(root: Path = ROOT_DIR, *, force_reload: bool = True) -> dict[str, Any]:
     """Headless validation helper used by both the GUI and unit tests."""
     config = load_keywords_config(root=root, force_reload=force_reload)
+    canonical_path = config.requested_path or resolve_keywords_path(root=root)
     return {
-        "path": str(config.path),
+        "path": str(canonical_path),
+        "effective_path": str(config.path),
+        "present": canonical_path.exists(),
+        "validation_status": (
+            "VALID — canonical workbook"
+            if config.source_kind == "canonical"
+            else "WARNING — canonical invalid; verified last-known-good snapshot is in use"
+        ),
+        "source_kind": config.source_kind,
+        "last_successful_load_time": config.loaded_at,
+        "last_validation_time": config.last_validation_at,
         "company_name": config.company_name,
         "active_keyword_count": config.active_keyword_count,
+        "inactive_keyword_count": config.inactive_keyword_count,
+        "category_counts": config.category_counts,
+        "category_labels": {
+            category: KEYWORD_CATEGORY_LABELS.get(category, category)
+            for category in config.category_counts
+        },
+        "last_known_good_status": config.last_known_good_status,
+        "last_known_good_path": str(config.last_known_good_path or ""),
+        "last_known_good_saved_at": config.last_known_good_saved_at,
+        "validation_errors": list(config.validation_errors),
         "summary": validation_summary(config),
         "rescore_semantics": RESCORE_ALWAYS_SUMMARY,
         "rescore_exceptions": RESCORE_ALWAYS_EXCEPTIONS,
@@ -711,20 +764,30 @@ class TenderFinderLauncherApp:
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
         self.run_tab = ttk.Frame(self.notebook, padding=pad)
+        self.keywords_tab = ttk.Frame(self.notebook, padding=pad)
         self.email_tab = ttk.Frame(self.notebook, padding=pad)
         self.source_tab = ttk.Frame(self.notebook, padding=pad)
         self.results_tab = ttk.Frame(self.notebook, padding=pad)
         self.settings_tab = ttk.Frame(self.notebook, padding=pad)
         self.notebook.add(self.run_tab, text="Run")
+        self.notebook.add(self.keywords_tab, text="Keywords")
         self.notebook.add(self.email_tab, text="Email Alerts")
         self.notebook.add(self.source_tab, text="Source Checks")
         self.notebook.add(self.results_tab, text="Results / Logs")
         self.notebook.add(self.settings_tab, text="Settings / Advanced")
 
-        for tab in (self.run_tab, self.email_tab, self.source_tab, self.results_tab, self.settings_tab):
+        for tab in (
+            self.run_tab,
+            self.keywords_tab,
+            self.email_tab,
+            self.source_tab,
+            self.results_tab,
+            self.settings_tab,
+        ):
             tab.columnconfigure(0, weight=1)
 
         self._build_run_tab()
+        self._build_keywords_tab()
         self._build_email_tab()
         self._build_source_tab()
         self._build_results_tab()
@@ -807,6 +870,91 @@ class TenderFinderLauncherApp:
         ttk.Label(quick, textvariable=self.result_var, font=(UI_FONT, 9), wraplength=980, justify="left").grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
         ttk.Label(quick, textvariable=self.result_paths_var, font=(UI_FONT, 8), wraplength=980, justify="left").grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
 
+    def _build_keywords_tab(self) -> None:
+        tk, ttk = self.tk, self.ttk
+        self.keywords_path_var = tk.StringVar()
+        self.keywords_presence_var = tk.StringVar()
+        self.keywords_validation_status_var = tk.StringVar()
+        self.keywords_times_var = tk.StringVar()
+        self.keywords_counts_var = tk.StringVar()
+        self.keywords_categories_var = tk.StringVar()
+        self.keywords_lkg_var = tk.StringVar()
+        self.keywords_effective_var = tk.StringVar()
+        self.keywords_errors_var = tk.StringVar()
+
+        overview = ttk.LabelFrame(self.keywords_tab, text="Founder-editable keyword scoring")
+        overview.grid(row=0, column=0, sticky="ew")
+        overview.columnconfigure(1, weight=1)
+        labels = (
+            ("Canonical workbook", self.keywords_path_var),
+            ("Workbook state", self.keywords_presence_var),
+            ("Validation", self.keywords_validation_status_var),
+            ("Load / validation times", self.keywords_times_var),
+            ("Rule counts", self.keywords_counts_var),
+            ("Categories", self.keywords_categories_var),
+            ("Last-known-good", self.keywords_lkg_var),
+            ("Rules used by current runs", self.keywords_effective_var),
+        )
+        for row_index, (label, variable) in enumerate(labels):
+            ttk.Label(overview, text=label, font=(UI_FONT, 9, "bold")).grid(
+                row=row_index, column=0, sticky="nw", padx=(10, 12), pady=(8 if row_index == 0 else 4, 4)
+            )
+            ttk.Label(
+                overview,
+                textvariable=variable,
+                wraplength=790,
+                justify="left",
+            ).grid(
+                row=row_index, column=1, sticky="ew", padx=(0, 10), pady=(8 if row_index == 0 else 4, 4)
+            )
+
+        actions = ttk.Frame(overview)
+        actions.grid(row=len(labels), column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 10))
+        for column in range(5):
+            actions.columnconfigure(column, weight=1)
+        self.open_keywords_workbook_button = ttk.Button(
+            actions, text="Open Keywords Workbook", command=self._on_open_keywords_workbook
+        )
+        self.open_keywords_workbook_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.open_keywords_folder_button = ttk.Button(
+            actions, text="Open Keywords Folder", command=self._on_open_keywords_folder
+        )
+        self.open_keywords_folder_button.grid(row=0, column=1, sticky="ew", padx=4)
+        self.keywords_validate_button = ttk.Button(
+            actions, text="Validate Keywords", command=self._on_validate_keywords
+        )
+        self.keywords_validate_button.grid(row=0, column=2, sticky="ew", padx=4)
+        self.reload_keywords_button = ttk.Button(
+            actions, text="Reload Keywords", command=self._on_reload_keywords
+        )
+        self.reload_keywords_button.grid(row=0, column=3, sticky="ew", padx=4)
+        self.view_keywords_instructions_button = ttk.Button(
+            actions, text="View Instructions", command=self._on_view_keywords_instructions
+        )
+        self.view_keywords_instructions_button.grid(row=0, column=4, sticky="ew", padx=(4, 0))
+
+        errors = ttk.LabelFrame(self.keywords_tab, text="Visible validation errors")
+        errors.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        errors.columnconfigure(0, weight=1)
+        ttk.Label(
+            errors,
+            textvariable=self.keywords_errors_var,
+            wraplength=980,
+            justify="left",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+
+        semantics = ttk.LabelFrame(self.keywords_tab, text="Scoring behavior")
+        semantics.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
+        self.keywords_tab.rowconfigure(2, weight=1)
+        semantics.columnconfigure(0, weight=1)
+        ttk.Label(
+            semantics,
+            text=RESCORE_ALWAYS_SUMMARY + "\n\n" + RESCORE_ALWAYS_EXCEPTIONS,
+            wraplength=980,
+            justify="left",
+        ).grid(row=0, column=0, sticky="nw", padx=10, pady=10)
+        self._refresh_keywords_tab(force_reload=False)
+
     def _build_email_tab(self) -> None:
         ttk = self.ttk
 
@@ -884,7 +1032,10 @@ class TenderFinderLauncherApp:
         manager.columnconfigure(0, weight=1)
         manager.rowconfigure(0, weight=1)
 
-        columns = ("source_id", "name", "track", "active", "adapter", "last_probe_status")
+        columns = (
+            "source_id", "name", "track", "active", "adapter",
+            "operational_status", "last_test",
+        )
         self.source_tree = ttk.Treeview(manager, columns=columns, show="headings", height=12, selectmode="browse")
         headings = {
             "source_id": "Source ID",
@@ -892,12 +1043,16 @@ class TenderFinderLauncherApp:
             "track": "Track",
             "active": "Active",
             "adapter": "Adapter",
-            "last_probe_status": "Last Test",
+            "operational_status": "Operational Status",
+            "last_test": "Last Test Result",
         }
-        widths = {"source_id": 155, "name": 250, "track": 90, "active": 60, "adapter": 155, "last_probe_status": 145}
+        widths = {
+            "source_id": 135, "name": 205, "track": 80, "active": 55,
+            "adapter": 135, "operational_status": 145, "last_test": 180,
+        }
         for column in columns:
             self.source_tree.heading(column, text=headings[column])
-            self.source_tree.column(column, width=widths[column], minwidth=55, stretch=column in {"name", "last_probe_status"})
+            self.source_tree.column(column, width=widths[column], minwidth=55, stretch=column in {"name", "last_test"})
         source_scroll = ttk.Scrollbar(manager, orient="vertical", command=self.source_tree.yview)
         self.source_tree.configure(yscrollcommand=source_scroll.set)
         self.source_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 6))
@@ -914,11 +1069,11 @@ class TenderFinderLauncherApp:
         self.edit_source_button.grid(row=0, column=1, sticky="ew", padx=4)
         self.toggle_source_button = ttk.Button(buttons, text="Enable / Disable", command=self._on_toggle_source)
         self.toggle_source_button.grid(row=0, column=2, sticky="ew", padx=4)
-        self.validate_sources_button = ttk.Button(buttons, text="Validate Registry", command=self._on_validate_sources)
+        self.validate_sources_button = ttk.Button(buttons, text="Validate Configuration", command=self._on_validate_sources)
         self.validate_sources_button.grid(row=0, column=3, sticky="ew", padx=4)
-        self.test_source_offline_button = ttk.Button(buttons, text="Test Selected Offline", command=lambda: self._on_test_selected_source(False))
+        self.test_source_offline_button = ttk.Button(buttons, text="Offline Parser Test", command=lambda: self._on_test_selected_source(False))
         self.test_source_offline_button.grid(row=0, column=4, sticky="ew", padx=4)
-        self.test_source_live_button = ttk.Button(buttons, text="Test Selected Live", command=lambda: self._on_test_selected_source(True))
+        self.test_source_live_button = ttk.Button(buttons, text="Live Source Test", command=lambda: self._on_test_selected_source(True))
         self.test_source_live_button.grid(row=0, column=5, sticky="ew", padx=(4, 0))
         self.source_manager_status_var = self.tk.StringVar(value="Loading canonical registry...")
         ttk.Label(manager, textvariable=self.source_manager_status_var, wraplength=980, justify="left").grid(
@@ -942,14 +1097,21 @@ class TenderFinderLauncherApp:
                 iid=row["source_id"],
                 values=(
                     row["source_id"], row["name"], row["track"], row["active"],
-                    row["adapter"], row["last_probe_status"] or "not tested",
+                    row["adapter"], row["operational_status"],
+                    row["last_test_result"] or "NOT TESTED",
                 ),
             )
-        active_tenders = sum(row["active"] == "Y" and row["track"] == "tender" for row in rows)
-        self._expected_source_status_lines = active_tenders + 1
+        runtime_tenders = sum(
+            row["track"] == "tender" and source_is_runtime_eligible(row)
+            for row in rows
+        )
+        self._expected_source_status_lines = runtime_tenders + 1
         self.source_manager_status_var.set(
-            f"VALID — {summary['total']} sources ({summary['active']} active; "
-            f"{summary['tender']} tender; {summary['development']} development). "
+            f"CONFIGURATION VALID — {summary['total']} configured; {summary['enabled']} enabled; "
+            f"{summary['runtime_eligible']} runtime-eligible; {summary['verified_live']} verified live; "
+            f"{summary['ready_for_live_test']} ready for live test; {summary['manual_only']} manual; "
+            f"{summary['needs_configuration']} need configuration; {summary['blocked']} blocked; "
+            f"{summary['wrong_source']} wrong source. "
             f"Runtime registry: {summary['path']}"
         )
 
@@ -977,6 +1139,7 @@ class TenderFinderLauncherApp:
                 "adapter": "public_listing",
                 "no_retry": "N",
                 "status": "ready_for_probe",
+                "operational_status": "needs_configuration",
             }
         )
         if existing:
@@ -984,8 +1147,8 @@ class TenderFinderLauncherApp:
 
         window = tk.Toplevel(self.root)
         window.title("Edit Source" if existing else "Add Source")
-        window.geometry("780x610")
-        window.minsize(680, 560)
+        window.geometry("800x690")
+        window.minsize(700, 640)
         window.transient(self.root)
         window.grab_set()
         window.columnconfigure(1, weight=1)
@@ -996,9 +1159,14 @@ class TenderFinderLauncherApp:
             ("track", "Track"),
             ("active", "Active"),
             ("adapter", "Adapter"),
+            ("operational_status", "Operational status"),
             ("municipality", "Municipality"),
             ("url", "URL / dataset token"),
             ("endpoint", "Endpoint / item ID"),
+            ("layer_index", "ArcGIS layer index (optional)"),
+            ("layer_keywords", "Discovery keywords (; separated)"),
+            ("test_query_where", "Live-test ArcGIS where (optional)"),
+            ("test_query_order_by", "Live-test ArcGIS order by (optional)"),
             ("rss", "RSS URL (optional)"),
             ("url_variants", "URL variants (| separated)"),
             ("no_retry", "No retry"),
@@ -1009,18 +1177,28 @@ class TenderFinderLauncherApp:
         variables = {key: tk.StringVar(value=source.get(key, "")) for key, _label in fields}
         widgets: dict[str, Any] = {}
         for row_index, (key, label) in enumerate(fields):
-            ttk.Label(window, text=label).grid(row=row_index, column=0, sticky="w", padx=(12, 8), pady=5)
+            ttk.Label(window, text=label).grid(row=row_index, column=0, sticky="w", padx=(12, 8), pady=3)
             if key == "track":
                 widget = ttk.Combobox(window, textvariable=variables[key], values=("tender", "development"), state="readonly")
             elif key in {"active", "no_retry"}:
                 widget = ttk.Combobox(window, textvariable=variables[key], values=("Y", "N"), state="readonly")
             elif key == "adapter":
                 widget = ttk.Combobox(window, textvariable=variables[key], state="readonly")
+            elif key == "operational_status":
+                choices = list(SOURCE_EDITABLE_OPERATIONAL_STATUSES)
+                if variables[key].get() and variables[key].get() not in choices:
+                    choices.append(variables[key].get())
+                widget = ttk.Combobox(
+                    window,
+                    textvariable=variables[key],
+                    values=tuple(choices),
+                    state="readonly",
+                )
             else:
                 widget = ttk.Entry(window, textvariable=variables[key])
                 if key == "source_id" and existing:
                     widget.configure(state="readonly")
-            widget.grid(row=row_index, column=1, sticky="ew", padx=(0, 12), pady=5)
+            widget.grid(row=row_index, column=1, sticky="ew", padx=(0, 12), pady=3)
             widgets[key] = widget
 
         adapter_widget = widgets["adapter"]
@@ -1036,7 +1214,8 @@ class TenderFinderLauncherApp:
 
         note = (
             "New sources start disabled for safety. Save validates the entire registry atomically. "
-            "Use Test Selected Offline before enabling; Live Test is always a separate action."
+            "Use Offline Parser Test before enabling; Live Source Test is always a separate explicit action. "
+            "Only a successful live parser test can assign verified_live."
         )
         ttk.Label(window, text=note, wraplength=740, justify="left").grid(
             row=len(fields), column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 4)
@@ -1095,10 +1274,28 @@ class TenderFinderLauncherApp:
             self.messagebox.showerror("Source registry invalid", str(exc))
             return
         self._refresh_source_registry()
+        selected = self._selected_source_row(warn=False)
+        selected_text = ""
+        if selected is not None:
+            result = validate_source_definition(selected["source_id"], root=ROOT_DIR)
+            selected_text = (
+                f"\n\nSelected source: {result['source_id']}\n"
+                f"Configuration: {result['status']}\n"
+                f"Operational status: {result['operational_status']}\n"
+                f"Runtime eligible: {'YES' if result['runtime_eligible'] else 'NO'}\n"
+                f"Parser run: NO\nNetwork used: NO"
+            )
         self.messagebox.showinfo(
-            "Source registry is valid",
-            f"Total: {summary['total']}\nActive: {summary['active']}\n"
-            f"Tender: {summary['tender']}\nDevelopment: {summary['development']}\n\n{summary['path']}",
+            "Source configuration is valid",
+            f"Configured: {summary['total']}\nEnabled: {summary['enabled']}\n"
+            f"Runtime eligible: {summary['runtime_eligible']}\n"
+            f"Verified live: {summary['verified_live']}\n"
+            f"Ready for live test: {summary['ready_for_live_test']}\n"
+            f"Manual / needs configuration / blocked / wrong source: "
+            f"{summary['manual_only']} / {summary['needs_configuration']} / "
+            f"{summary['blocked']} / {summary['wrong_source']}\n\n"
+            "This action validates configuration only. It does not run a parser and does not prove a source works."
+            f"{selected_text}\n\n{summary['path']}",
         )
 
     def _on_test_selected_source(self, allow_network: bool) -> None:
@@ -1122,7 +1319,12 @@ class TenderFinderLauncherApp:
 
         def work() -> None:
             try:
-                result = test_source_definition(row["source_id"], root=ROOT_DIR, allow_network=allow_network)
+                result = test_source_definition(
+                    row["source_id"],
+                    root=ROOT_DIR,
+                    allow_network=allow_network,
+                    persist_result=True,
+                )
                 self._source_test_queue.put(("result", result))
             except Exception as exc:
                 self._source_test_queue.put(("error", str(exc)))
@@ -1146,14 +1348,21 @@ class TenderFinderLauncherApp:
         result = dict(payload)
         verdict = "PASS" if result.get("passed") else "FAIL"
         network = "live network used" if result.get("network_used") else "offline; no network"
-        self.source_manager_status_var.set(
-            f"{verdict}: {result.get('source_id')} -> {result.get('status')} ({network})"
-        )
         self._refresh_source_registry()
+        self.source_manager_status_var.set(
+            f"{verdict}: {result.get('source_id')} -> {result.get('status')} ({network}); "
+            f"operational status={result.get('operational_status', 'unchanged')}"
+        )
         details = json.dumps(result.get("details"), indent=2, ensure_ascii=False, default=str)
+        raw_count = result.get("raw_candidate_count", result.get("candidate_count", 0))
+        normalized_count = result.get("normalized_count", 0)
+        parser_name = str(result.get("parser") or "").strip()
+        parser_display = "YES" + (f" ({parser_name})" if parser_name else "") if result.get("parser_used") else "NO"
         message = (
             f"{verdict}: {result.get('source_id')}\nStatus: {result.get('status')}\n"
-            f"Mode: {network}\n\n{details[:1800]}"
+            f"Mode: {network}\nParser used: {parser_display}\n"
+            f"Raw candidates: {raw_count}\nNormalized records: {normalized_count}\n"
+            f"Operational status: {result.get('operational_status', 'unchanged')}\n\n{details[:1800]}"
         )
         if result.get("passed"):
             self.messagebox.showinfo("Source test complete", message)
@@ -1235,6 +1444,72 @@ class TenderFinderLauncherApp:
             self.out_dir_var.set(chosen)
             self._refresh_output_path_display()
 
+    def _refresh_keywords_tab(
+        self,
+        *,
+        force_reload: bool,
+    ) -> tuple[dict[str, Any] | None, KeywordConfigError | None]:
+        canonical = resolve_keywords_path(root=ROOT_DIR)
+        self.keywords_path_var.set(str(canonical))
+        self.keywords_presence_var.set("PRESENT" if canonical.exists() else "MISSING")
+        try:
+            result = validate_keywords_for_gui(ROOT_DIR, force_reload=force_reload)
+        except KeywordConfigError as exc:
+            lkg = inspect_last_known_good(root=ROOT_DIR)
+            self.keywords_validation_status_var.set("INVALID — no usable rules loaded")
+            self.keywords_times_var.set("Last validation: failed now")
+            self.keywords_counts_var.set("Unavailable until a valid workbook or verified snapshot can load")
+            self.keywords_categories_var.set("Unavailable")
+            self.keywords_lkg_var.set(
+                f"{str(lkg['status']).upper()} — {lkg['detail']}"
+                + (f"; saved {lkg['saved_at']}" if lkg.get("saved_at") else "")
+            )
+            self.keywords_effective_var.set("NONE — runs are blocked before scoring")
+            self.keywords_errors_var.set("\n".join(f"• {error}" for error in exc.errors))
+            self.company_profile_var.set("Keywords invalid — run blocked")
+            return None, exc
+
+        categories = ", ".join(
+            f"{result['category_labels'][category]}: {count}"
+            for category, count in result["category_counts"].items()
+        )
+        self.keywords_validation_status_var.set(result["validation_status"])
+        self.keywords_times_var.set(
+            f"Last successful load: {result['last_successful_load_time']} | "
+            f"Last validation: {result['last_validation_time']}"
+        )
+        self.keywords_counts_var.set(
+            f"Active: {result['active_keyword_count']} | "
+            f"Inactive: {result['inactive_keyword_count']}"
+        )
+        self.keywords_categories_var.set(categories or "No active categories")
+        self.keywords_lkg_var.set(
+            f"{result['last_known_good_status']}"
+            + (f" | saved {result['last_known_good_saved_at']}" if result["last_known_good_saved_at"] else "")
+            + (f" | {result['last_known_good_path']}" if result["last_known_good_path"] else "")
+        )
+        self.keywords_effective_var.set(
+            ("CANONICAL" if result["source_kind"] == "canonical" else "LAST-KNOWN-GOOD FALLBACK")
+            + f" — {result['effective_path']}"
+        )
+        self.keywords_errors_var.set(
+            "None."
+            if not result["validation_errors"]
+            else "\n".join(f"• {error}" for error in result["validation_errors"])
+        )
+        self.company_profile_var.set(result["summary"])
+        return result, None
+
+    def _on_open_keywords_workbook(self) -> None:
+        workbook = resolve_keywords_path(root=ROOT_DIR)
+        if not workbook.exists():
+            self.messagebox.showerror(
+                "Keywords workbook missing",
+                f"The canonical workbook is missing:\n{workbook}\n\nRestore it from keywords_template.xlsx or a trusted backup.",
+            )
+            return
+        open_path_with_default_app(str(workbook))
+
     def _on_open_keywords_folder(self) -> None:
         folder = keywords_folder(ROOT_DIR)
         if not folder.exists():
@@ -1246,17 +1521,40 @@ class TenderFinderLauncherApp:
         open_path_with_default_app(str(folder))
 
     def _on_validate_keywords(self) -> None:
-        try:
-            result = validate_keywords_for_gui(ROOT_DIR, force_reload=True)
-        except KeywordConfigError as exc:
-            self.company_profile_var.set(keyword_profile_status(ROOT_DIR))
-            self.messagebox.showerror("Keywords validation failed", str(exc))
+        result, error = self._refresh_keywords_tab(force_reload=True)
+        if error is not None:
+            self.messagebox.showerror("Keywords validation failed", str(error))
             return
-        self.company_profile_var.set(result["summary"])
-        self.messagebox.showinfo(
-            "Keywords are valid",
+        assert result is not None
+        dialog = self.messagebox.showinfo if result["source_kind"] == "canonical" else self.messagebox.showwarning
+        dialog(
+            "Keywords validation complete",
             f"{result['summary']}\n\n{result['rescore_semantics']}\n\n"
-            f"{result['rescore_exceptions']}\n\nWorkbook:\n{result['path']}",
+            f"{result['rescore_exceptions']}\n\nCanonical workbook:\n{result['path']}\n\n"
+            f"Effective workbook:\n{result['effective_path']}",
+        )
+
+    def _on_reload_keywords(self) -> None:
+        clear_keywords_cache()
+        result, error = self._refresh_keywords_tab(force_reload=True)
+        if error is not None:
+            self.messagebox.showerror("Keywords reload failed", str(error))
+            return
+        assert result is not None
+        self.messagebox.showinfo(
+            "Keywords reloaded",
+            f"Reloaded {result['active_keyword_count']} active and "
+            f"{result['inactive_keyword_count']} inactive rules from {result['source_kind']}.",
+        )
+
+    def _on_view_keywords_instructions(self) -> None:
+        self.messagebox.showinfo(
+            "How to edit keywords.xlsx",
+            "Open the workbook and edit the Keywords sheet. Use match_type contains, exact, or regex; "
+            "use whole-number weights; set active to Y or N; keep category IDs from the dropdown.\n\n"
+            "Save the workbook, return here, choose Validate Keywords, then Reload Keywords. "
+            "Every new run uses RESCORE_ALWAYS and writes Keyword_Change_Audit. Unsafe or invalid regex "
+            "rules are rejected before scoring. The Instructions sheet in the workbook contains the full reference.",
         )
 
     def _selected_email_folder(self) -> Path:
@@ -1423,7 +1721,8 @@ class TenderFinderLauncherApp:
             f"passed {self_test_counts.get('passed', '?')} | "
             f"failed {self_test_counts.get('failed', '?')} | "
             f"skipped {self_test_counts.get('skipped', '?')} | "
-            f"intentionally excluded {self_test_counts.get('intentionally_excluded', '?')}"
+            f"intentionally excluded {self_test_counts.get('intentionally_excluded', '?')} | "
+            f"not tested (no fixture) {self_test_counts.get('not_tested_fixture', '?')}"
         )
         self.last_results = read_run_results(result.out_dir)
         self.last_results["out_dir"] = str(result.out_dir)
@@ -1746,6 +2045,15 @@ class TenderFinderLauncherApp:
             self.messagebox.showerror("Keywords validation failed", str(exc))
             return
         self.company_profile_var.set(keyword_result["summary"])
+        self._refresh_keywords_tab(force_reload=False)
+        using_keyword_fallback = keyword_result["source_kind"] == "last_known_good"
+        if using_keyword_fallback:
+            self.messagebox.showwarning(
+                "Using last-known-good keyword rules",
+                "The canonical keywords.xlsx is invalid or missing. This run will use the verified "
+                "last-known-good workbook snapshot shown on the Keywords tab. Canonical validation "
+                "errors will remain visible and will be recorded in the run manifest.",
+            )
         self.mode_summary_var.set("Current mode: Offline/Test Run" if fast_mode else "Current mode: Live Run")
 
         review_xlsx, review_source = discover_review_xlsx(ROOT_DIR)
@@ -1789,6 +2097,10 @@ class TenderFinderLauncherApp:
             email_import_path=str(self._selected_email_folder()),
         )
         self._append_log(f"Review workbook: {review_xlsx} (via {review_source})")
+        if using_keyword_fallback:
+            self._append_log(
+                "WARNING: canonical keywords.xlsx is invalid; verified last-known-good snapshot is in use."
+            )
         self._append_log(f"Running: {' '.join(cmd)}")
         if fast_mode:
             self._append_log("Mode explanation: Offline/Test Run skips every live tender site and rebuilds from local inputs.")

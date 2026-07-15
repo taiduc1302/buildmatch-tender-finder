@@ -2,7 +2,7 @@
 
 Date: 2026-07-14
 
-1. `config/keywords.xlsx` is the only live rule source for the three migrated surfaces. A missing or invalid file is a hard stop; retaining fallback lists would make founder edits misleading.
+1. `config/keywords.xlsx` is the canonical editable rule source for the three migrated surfaces. A successfully validated canonical workbook is atomically copied to an external SHA-verified last-known-good workbook. If the normal canonical path later becomes missing or invalid, only that verified snapshot may be used and its use is visible in the GUI, validation report, and run manifest. There is no hardcoded-rule fallback. A custom override path does not implicitly borrow the canonical snapshot.
 2. The six requested `Keywords` columns are retained and one minimal extension, `param`, is added. `gate_collision` rows use it for pipe-separated collision text; `gate_exclude` rows use `negative_title` or `absolute_title`. This preserves the existing structured gates instead of flattening them.
 3. `tender_match` is added to the category vocabulary because the existing tender detector is a separate verbatim regex surface and does not fit the proposed civil-gate categories.
 4. Existing matching semantics are preserved per surface:
@@ -25,4 +25,6 @@ Date: 2026-07-14
 17. The rule cache remains per process/run. A new process, GUI Validate/run action, or explicit force reload reads the edited workbook; one invocation never mixes rule versions midway through scoring.
 18. Three honest exceptions remain: `tenderfinder_agent2.py` is frozen legacy code; historical Vancouver permit rows do not persist the raw attributes required to recreate `_van_permit_fit_tier`, so only that stored non-score tier is retained during replay; tender candidates that were never persisted cannot be retroactively evaluated, while every newly parsed candidate uses current tender/civil rules.
 19. Historical packaged scores such as 74, 81, and 65 came from the snapshot-era replay behavior that copied `fit_score` in `normalized_row`. They are deliberately not preserved as expected values after `RESCORE_ALWAYS`.
-20. Offline end-to-end variants are authored outside the repository from the frozen live/template workbooks. `TENDER_FINDER_KEYWORDS_CONFIG` selects each variant for one invocation and is cleared afterward. `keywords_validation_last.txt` is a runtime report and is ignored by Git.
+20. Offline end-to-end variants are authored outside the repository from temporary copies of the canonical/template workbooks. `TENDER_FINDER_KEYWORDS_CONFIG` selects each variant for one invocation and is cleared afterward. Validation reports, the last-known-good workbook, and its metadata are mutable runtime state under `C:\tenderfinder_out\state\<context>\settings`, never package-local artifacts.
+21. Editable regex is bounded by pattern length, input length, prohibited-construct validation, and a runtime timeout. A rejected or timed-out regex is a visible validation/run error and cannot silently fall back to a built-in expression.
+22. Non-Vancouver signal tiers are recomputed from current score on replay. Vancouver permit tiers are recomputed only when the persisted raw snapshot is sufficient; otherwise the retained legacy tier is explicit in `Keyword_Change_Audit`. This prevents an old permit tier from being presented as a current keyword-derived result.

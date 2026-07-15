@@ -1,0 +1,13 @@
+{
+  "features": [
+    {
+      "attributes": {
+        "APPLICATION_NO": "SA-2026-004",
+        "ADDRESS": "400 Example Boulevard",
+        "DESCRIPTION": "Servicing agreement for sanitary and storm infrastructure",
+        "STATUS": "Execution",
+        "APPLICANT": "Example Properties Inc"
+      }
+    }
+  ]
+}
