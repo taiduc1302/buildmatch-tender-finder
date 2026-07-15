@@ -69,6 +69,11 @@ except Exception:
 
 import tenderfinder_guards as G
 import tenderfinder_source_registry as REG
+from tenderfinder_keywords_config import (
+    KeywordConfigError,
+    load_keywords_config,
+    print_validation_summary,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +703,11 @@ def normalize_lead(conn, layer_name, attrs):
 
     blob = " ".join(str(v) for v in attrs.values() if v is not None)
     blob += f" {app_type} {status} {desc} {applicant}"
-    fit = G.score_civil_fit(blob, muni)
+    fit = G.score_civil_fit(
+        blob,
+        muni,
+        match_fields=[*attrs.values(), app_type, status, desc, applicant, address],
+    )
 
     type_stage = " — ".join([str(x) for x in (app_type, status) if x]) or layer_name
     scope = (str(desc) or str(app_type) or "").strip()[:300]
@@ -1004,26 +1013,12 @@ def _save_raw(raw_dir, cid, recs):
 # ============================================================================
 # Vancouver Building Permit fit filter (Patch 5.0)
 # ============================================================================
-_VAN_PERMIT_HIGH_SIGNALS = [
-    "subdivision", "site servicing", "servicing", "excavat", "earthwork",
-    "grading", "roadwork", "road work", "civil", "watermain", "water main",
-    "sanitary", "storm sewer", "drainage", "utility", "utilities",
-    "rezoning", "development permit", "land development", "infrastructure",
-    "multifamily", "multi-family", "industrial", "institutional",
-    "municipal", "large parcel",
-]
-_VAN_PERMIT_LOW_SIGNALS = [
-    "tenant improvement", "interior", "renovation", "reno",
-    "small residential", "single family", "single-family",
-    "sign permit", "plumbing only", "electrical only", "roofing",
-    "small repair", "suite alteration", "kitchen", "bathroom",
-]
-
 def _van_permit_fit_tier(attrs):
     """Return 'strong', 'watchlist', 'bulk', or 'noisy' for a Van permit row."""
-    blob = " ".join(str(v) for v in attrs.values() if v).lower()
-    high = sum(1 for s in _VAN_PERMIT_HIGH_SIGNALS if s in blob)
-    low  = sum(1 for s in _VAN_PERMIT_LOW_SIGNALS  if s in blob)
+    config = load_keywords_config()
+    blob = " ".join(str(v) for v in attrs.values() if v)
+    high = config.match_count("van_signal_primary", blob)
+    low = config.match_count("van_signal_secondary", blob)
     if high >= 2 or (high >= 1 and low == 0):
         return "strong"
     if high >= 1:
@@ -1623,6 +1618,13 @@ def main():
     ap.add_argument("--include-broken-sources", action="store_true",
                     help="after link preflight, allow BROKEN/FIX_URL_FIRST sources into selected connector run")
     args = ap.parse_args()
+
+    try:
+        keyword_config = load_keywords_config(force_reload=True)
+    except KeywordConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr, flush=True)
+        sys.exit(2)
+    print_validation_summary(keyword_config)
 
     preflight_result = None
     if args.promote_reviewed:

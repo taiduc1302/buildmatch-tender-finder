@@ -1,0 +1,362 @@
+{
+  "analyzed": [
+    {
+      "address": "1000 Nowhere Street",
+      "app_no": "SG-2026-0501",
+      "app_type_stage": "Sign Permit",
+      "fit_score": 32,
+      "municipality": "Testburg",
+      "route": "Rejected_Archive",
+      "source": "City of Testburg - Planning Reports (SYNTHETIC)",
+      "source_url": "https://www.example.com/testburg_planning"
+    },
+    {
+      "address": "1100 Nowhere Street",
+      "app_no": "TI-2026-0502",
+      "app_type_stage": "Tenant Improvement",
+      "fit_score": 20,
+      "municipality": "Testburg",
+      "route": "Rejected_Archive",
+      "source": "City of Testburg - Planning Reports (SYNTHETIC)",
+      "source_url": "https://www.example.com/testburg_planning"
+    },
+    {
+      "address": "700 Fake Lane",
+      "app_no": "BP-2026-0401",
+      "app_type_stage": "Building Permit - Issued",
+      "fit_score": 44,
+      "municipality": "Exampleville",
+      "route": "Bulk_Intake_Raw",
+      "source": "City of Exampleville - Development Applications (SYNTHETIC)",
+      "source_url": "https://www.example.com/exampleville_devapps"
+    },
+    {
+      "address": "800 Fake Lane",
+      "app_no": "BP-2026-0402",
+      "app_type_stage": "Addition / Alteration",
+      "fit_score": 20,
+      "municipality": "Exampleville",
+      "route": "Bulk_Intake_Raw",
+      "source": "City of Exampleville - Development Applications (SYNTHETIC)",
+      "source_url": "https://www.example.com/exampleville_devapps"
+    },
+    {
+      "address": "900 Demo Court",
+      "app_no": "BP-2026-0403",
+      "app_type_stage": "New Building",
+      "fit_score": 35,
+      "municipality": "Sampleton",
+      "route": "Bulk_Intake_Raw",
+      "source": "Town of Sampleton - Development Applications (SYNTHETIC)",
+      "source_url": "https://www.example.com/sampleton_devapps"
+    }
+  ],
+  "counts": {
+    "analyzed": 5,
+    "future": 6,
+    "sources": 22,
+    "watch": 2
+  },
+  "future": [
+    {
+      "address": "100 Demo Street",
+      "address_source": "ORIGINAL",
+      "app_no": "DA-2026-0101",
+      "app_type_stage": "Subdivision - In Review",
+      "applicant_name": "Example Developer A Ltd.",
+      "approximate_location": null,
+      "detail_available": "YES",
+      "est_lots": null,
+      "est_storeys": null,
+      "est_units": null,
+      "fit_score": 100,
+      "lead_id": "85b8c63a5407e89b",
+      "municipality": "Exampleville",
+      "project_scale_tier": "SMALL",
+      "regional_cluster": "Other",
+      "scale": "unknown",
+      "scope_summary": "Proposed 45-lot single family subdivision requiring full onsite/offsite servicing: roads, watermain, storm and sanitary sewers.",
+      "signal_quality": "HIGH",
+      "source": "City of Exampleville - Development Applications (SYNTHETIC)",
+      "source_tier": "TIER_2",
+      "source_url": "https://www.example.com/exampleville_devapps",
+      "status_class": "OTHER"
+    },
+    {
+      "address": "200 Sample Avenue",
+      "address_source": "ORIGINAL",
+      "app_no": "DA-2026-0102",
+      "app_type_stage": "Development Permit - Pending",
+      "applicant_name": "Example Developer B Inc.",
+      "approximate_location": null,
+      "detail_available": "YES",
+      "est_lots": null,
+      "est_storeys": null,
+      "est_units": null,
+      "fit_score": 80,
+      "lead_id": "83f5bf9ae4e00fec",
+      "municipality": "Exampleville",
+      "project_scale_tier": "UNKNOWN",
+      "regional_cluster": "Other",
+      "scale": "unknown",
+      "scope_summary": "Drainage upgrade and detention pond construction for commercial site; includes culvert replacement and storm sewer extension.",
+      "signal_quality": "HIGH",
+      "source": "City of Exampleville - Development Applications (SYNTHETIC)",
+      "source_tier": "TIER_2",
+      "source_url": "https://www.example.com/exampleville_devapps",
+      "status_class": "OTHER"
+    },
+    {
+      "address": "300 Test Boulevard",
+      "address_source": "ORIGINAL",
+      "app_no": "DP-2026-0201",
+      "app_type_stage": "Capital Project - Design",
+      "applicant_name": "Town of Sampleton Parks Dept",
+      "approximate_location": null,
+      "detail_available": "YES",
+      "est_lots": null,
+      "est_storeys": null,
+      "est_units": null,
+      "fit_score": 71,
+      "lead_id": "97525eaf3f9face7",
+      "municipality": "Sampleton",
+      "project_scale_tier": "UNKNOWN",
+      "regional_cluster": "Other",
+      "scale": "unknown",
+      "scope_summary": "Park civil works: sports field regrading, pathway construction, site drainage and irrigation servicing.",
+      "signal_quality": "HIGH",
+      "source": "Town of Sampleton - Development Applications (SYNTHETIC)",
+      "source_tier": "TIER_2",
+      "source_url": "https://www.example.com/sampleton_devapps",
+      "status_class": "OTHER"
+    },
+    {
+      "address": "400 Example Road",
+      "address_source": "ORIGINAL",
+      "app_no": "RZ-2026-0202",
+      "app_type_stage": "Rezoning - Public Hearing",
+      "applicant_name": "Example Properties LP",
+      "approximate_location": null,
+      "detail_available": "YES",
+      "est_lots": null,
+      "est_storeys": null,
+      "est_units": null,
+      "fit_score": 89,
+      "lead_id": "8d3867694e1fa9e0",
+      "municipality": "Sampleton",
+      "project_scale_tier": "UNKNOWN",
+      "regional_cluster": "Other",
+      "scale": "unknown",
+      "scope_summary": "Rezoning application for mixed-use development; future civil component expected: road widening, utility relocation, site servicing.",
+      "signal_quality": "HIGH",
+      "source": "Town of Sampleton - Development Applications (SYNTHETIC)",
+      "source_tier": "TIER_2",
+      "source_url": "https://www.example.com/sampleton_devapps",
+      "status_class": "OTHER"
+    },
+    {
+      "address": "500 Placeholder Way",
+      "address_source": "ORIGINAL",
+      "app_no": "PL-2026-0301",
+      "app_type_stage": "OCP Amendment - Council",
+      "applicant_name": "Example Developer C Corp.",
+      "approximate_location": null,
+      "detail_available": "YES",
+      "est_lots": null,
+      "est_storeys": null,
+      "est_units": null,
+      "fit_score": 53,
+      "lead_id": "ac9206462d1ce7a5",
+      "municipality": "Testburg",
+      "project_scale_tier": "UNKNOWN",
+      "regional_cluster": "Other",
+      "scale": "unknown",
+      "scope_summary": "Watermain replacement program phase 2 identified in capital plan; 2.4 km of AC main replacement with road restoration.",
+      "signal_quality": "MEDIUM",
+      "source": "City of Testburg - Planning Reports (SYNTHETIC)",
+      "source_tier": "TIER_2",
+      "source_url": "https://www.example.com/testburg_planning",
+      "status_class": "OTHER"
+    },
+    {
+      "address": "600 Mock Crescent",
+      "address_source": "ORIGINAL",
+      "app_no": "PL-2026-0302",
+      "app_type_stage": "Development Permit - Issued",
+      "applicant_name": "Example Holdings Ltd.",
+      "approximate_location": null,
+      "detail_available": "YES",
+      "est_lots": null,
+      "est_storeys": null,
+      "est_units": null,
+      "fit_score": 80,
+      "lead_id": "5cebeefefcccf89e",
+      "municipality": "Testburg",
+      "project_scale_tier": "UNKNOWN",
+      "regional_cluster": "Other",
+      "scale": "unknown",
+      "scope_summary": "Municipal roadworks: intersection improvements, curb and gutter, sidewalk and bike lane construction on Demo Street corridor.",
+      "signal_quality": "HIGH",
+      "source": "City of Testburg - Planning Reports (SYNTHETIC)",
+      "source_tier": "TIER_2",
+      "source_url": "https://www.example.com/testburg_planning",
+      "status_class": "OTHER"
+    }
+  ],
+  "source_statuses": [
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "abbotsford_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "bc_bid_public"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "burnaby_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "city_north_van_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "civicinfo_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "coquitlam_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "delta_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "district_north_van_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "fvrd_tenders"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "kpu_procurement"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "maple_ridge_rfps"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "metro_van_procurement"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "new_west_procurement"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "pitt_meadows_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "port_coquitlam_bids"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "richmond_procurement"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "sd35_purchasing"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "slrd_contracting"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "surrey_bids_public"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "FETCH_OK_EMPTY_CURRENT_LIST",
+      "source_id": "tol_public_tenders"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "NEEDS_EMAIL_ALERT",
+      "source_id": "email_alert_intake"
+    },
+    {
+      "candidates": 0,
+      "civil_candidates": 0,
+      "final_status": "NEEDS_PAID_ACCESS",
+      "source_id": "bidcentral_landing"
+    }
+  ],
+  "watch": [
+    {
+      "address": null,
+      "app_no": null,
+      "app_type_stage": null,
+      "fit_score": 35,
+      "municipality": null,
+      "scope_summary": "manual PDF review; synthetic demo stub",
+      "source": "Town of Sampleton - Capital Plan (SYNTHETIC)",
+      "source_url": "https://www.example.com/sampleton_capital_plan"
+    },
+    {
+      "address": null,
+      "app_no": null,
+      "app_type_stage": null,
+      "fit_score": 35,
+      "municipality": null,
+      "scope_summary": "verify endpoint manually; synthetic demo stub",
+      "source": "City of Exampleville - Tenders Portal (SYNTHETIC)",
+      "source_url": "https://www.example.com/exampleville_tenders"
+    }
+  ]
+}

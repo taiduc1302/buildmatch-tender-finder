@@ -47,6 +47,7 @@ Tender_Finder_Generic_Portable_Package_YYYYMMDD_HHMMSS\
 |---|---|
 | **`tenderfinder_demo_three_buckets.py`** | **Main entry point.** Reads the review workbook (Track A leads), optionally sweeps live public tender pages (Track B), runs email alert intake, scores/routes rows, writes the three-bucket demo workbook + talk track + build report, then builds the slim "user master" with a production anti-fixture guard. ~8k lines; CLI: `--review-xlsx --out-dir [--no-fetch] [--email-intake] [--email-import-path]` |
 | `tenderfinder_launcher_gui.py` | Tkinter GUI wrapper around the demo builder + email import folder UX |
+| `tenderfinder_keywords_config.py` | Strict shared loader/validator/cache for `config\keywords.xlsx`; converts Profile values into effective rules and stops on invalid config |
 | `tenderfinder_email_intake.py` | Provider-neutral `.eml` parsing → tender rows (no credentials) |
 | `tenderfinder_email_guidance.py` | Email setup state detection + user guidance sheets |
 | `tenderfinder_raw_sweep.py` | Bulk source harvester driven by the master workbook source register |
@@ -62,9 +63,20 @@ Tender_Finder_Generic_Portable_Package_YYYYMMDD_HHMMSS\
 | `tenderfinder_surrey_inprocess.py` | Surrey in-process PDF lead parser |
 | `tenderfinder_dev_app_endpoints.csv` | Development-application endpoint register |
 | `data\` | Source-universe backlog workbook + candidate source CSV (public sources) |
-| `tests\` | 23 standalone test scripts + fixtures (run each with python; see RUNBOOK) |
+| `tests\` | 24 standalone test scripts + fixtures, including keyword configuration checks (run each with python; see RUNBOOK) |
 | `requirements.txt` / `requirements-dev.txt` | Runtime / test dependencies |
 | `.env.tenderfinder.local.example` | Optional search-API key env file format |
+
+## Company configuration
+
+| File | Role |
+|---|---|
+| `config\keywords.xlsx` | Live, pre-filled Tybo profile and all active rules used by the main scorer, civil/tender gates, labels, and Vancouver signal lists |
+| `config\keywords_template.xlsx` | Blank handoff template with the same schema, dropdowns, instructions, and inactive examples |
+| `config\keywords_validation_last.txt` | Runtime validation report; generated on validation and ignored by Git |
+
+`keywords_golden_snapshot.py` in the tests folder provides timestamp-free
+offline workbook comparisons for migration and regression checks.
 
 ## Entry points (batch launchers)
 

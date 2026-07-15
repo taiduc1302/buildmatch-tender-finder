@@ -73,6 +73,22 @@ def tenderfinder_user_config_path(root: Path | None = None) -> Path:
     return user_data_root(root) / "tenderfinder_user_config.json"
 
 
+def config_root(root: Path | None = None) -> Path:
+    return detect_package_root(root) / "config"
+
+
+def keywords_config_path(root: Path | None = None) -> Path:
+    return config_root(root) / "keywords.xlsx"
+
+
+def keywords_template_path(root: Path | None = None) -> Path:
+    return config_root(root) / "keywords_template.xlsx"
+
+
+def keywords_validation_report_path(root: Path | None = None) -> Path:
+    return config_root(root) / "keywords_validation_last.txt"
+
+
 def ensure_email_alert_dirs(root: Path | None = None) -> dict[str, Path]:
     package_root = detect_package_root(root)
     dirs = {

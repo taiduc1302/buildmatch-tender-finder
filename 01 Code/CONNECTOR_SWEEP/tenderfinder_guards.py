@@ -3,7 +3,7 @@
 """
 tenderfinder_guards.py — TENDER_FINDER sweep safety + classification core
 ========================================================
-Shared, dependency-free logic that decides whether a fetched layer/record is a
+Shared logic that decides whether a fetched layer/record is a
 real development-application lead or something that must be quarantined.
 
 This module is the single source of truth for:
@@ -17,11 +17,12 @@ This module is the single source of truth for:
 Design rule (from the project handoff): denylist + richness gate are applied
 *before* anything is loaded into Future_Projects, never after pollution lands.
 
-No third-party imports. Safe to import from the sweep, the registry bridge,
-and the master writer.
+Safe to import from the sweep, the registry bridge, and the master writer.
 """
 
 import re
+
+from tenderfinder_keywords_config import load_keywords_config
 
 # ---------------------------------------------------------------------------
 # 1. LAYER DENYLIST  (reject by name during discovery/ranking, before loading)
@@ -417,43 +418,62 @@ def pick_field(attrs, which):
 # Offline civil-fit heuristic (transparent, rule-based — NOT AI scoring).
 # The richer AI pass is PROMPT_DEV_APP_SCORING; this gives loaded rows a usable
 # Fit Score so they sort, while staying Verification = "Needs Review".
-POSITIVE_KEYWORDS = [
-    "subdivision", "servicing", "site servicing", "excavat", "water main",
-    "watermain", "storm", "sanitary", "sewer", "drainage", "utility",
-    "utilities", "road", "roadwork", "grading", "site prep", "earthwork",
-    "manhole", "bridge", "civil", "lot grading", "site concrete", "curb",
-    "gutter", "detention pond", "forcemain", "trunk main", "rezoning",
-    "development permit", "land development",
-]
-NEGATIVE_KEYWORDS = [
-    "tenant improvement", "interior", "renovation", "mechanical", "electrical",
-    "hvac", "roofing", "facade", "cladding", "unit alteration", "suite",
-    "kitchen", "bathroom", "sign permit", "demolition only",
-]
-TENDER_FINDER_CLIENTS = [
-    "polygon", "beedie", "wesgroup", "bird", "chandos", "turner",
-    "stuart olson", "dp world", "anthem", "city of surrey", "city of langley",
-    "township of langley", "maple ridge", "translink", "metro vancouver",
-    "semiahmoo", "ministry of transportation", "vancouver airport", "yvr",
-]
-CORE_GEO = ["surrey", "langley", "maple ridge", "pitt meadows"]
+def _scoring_rule_matches(rule, text, match_fields=None):
+    """Match exact rules against preserved fields and other rules against text."""
+    if rule.match_type == "exact" and match_fields is not None:
+        return any(rule.matches(value) for value in match_fields)
+    return rule.matches(text)
 
 
-def score_civil_fit(text_blob, municipality=""):
-    """Return an int Fit Score 0-100 from an offline keyword heuristic."""
-    t = (text_blob or "").lower()
+def score_civil_fit_breakdown(text_blob, municipality="", match_fields=None):
+    """Return the current score plus the rule attribution used to calculate it."""
+    config = load_keywords_config()
+    text = text_blob or ""
+    fields = tuple(value for value in (match_fields or ()) if value not in (None, ""))
     score = 35
-    for kw in POSITIVE_KEYWORDS:
-        if kw in t:
-            score += 9
-    for kw in NEGATIVE_KEYWORDS:
-        if kw in t:
-            score -= 12
-    if any(c in (municipality or "").lower() or c in t for c in CORE_GEO):
-        score += 8
-    if any(c in t for c in TENDER_FINDER_CLIENTS):
-        score += 6
-    return max(0, min(100, score))
+    positive_matches = tuple(
+        rule for rule in config.rules_for("positive")
+        if _scoring_rule_matches(rule, text, fields if match_fields is not None else None)
+    )
+    negative_matches = tuple(
+        rule for rule in config.rules_for("negative")
+        if _scoring_rule_matches(rule, text, fields if match_fields is not None else None)
+    )
+    for rule in positive_matches:
+        score += rule.weight
+    for rule in negative_matches:
+        score += rule.weight
+    geography_matches = tuple(
+        rule
+        for rule in config.rules_for("geography")
+        if rule.matches(municipality)
+        or _scoring_rule_matches(rule, text, fields if match_fields is not None else None)
+    )
+    geography_weight = max((rule.weight for rule in geography_matches), default=0)
+    if geography_matches:
+        score += geography_weight
+    client_matches = tuple(
+        rule for rule in config.rules_for("client")
+        if _scoring_rule_matches(rule, text, fields if match_fields is not None else None)
+    )
+    client_weight = max((rule.weight for rule in client_matches), default=0)
+    if client_matches:
+        score += client_weight
+    return {
+        "fit_score": max(0, min(100, score)),
+        "raw_score": score,
+        "positive_matches": positive_matches,
+        "negative_matches": negative_matches,
+        "geography_matches": geography_matches,
+        "geography_weight": geography_weight,
+        "client_matches": client_matches,
+        "client_weight": client_weight,
+    }
+
+
+def score_civil_fit(text_blob, municipality="", match_fields=None):
+    """Return a 0-100 offline Fit Score controlled by ``keywords.xlsx``."""
+    return score_civil_fit_breakdown(text_blob, municipality, match_fields)["fit_score"]
 
 
 if __name__ == "__main__":

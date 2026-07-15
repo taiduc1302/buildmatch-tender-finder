@@ -32,6 +32,9 @@ TENDER_FINDER Agent #2 — Future Projects pipeline (first working version)
 
 Зависимости:
   pip install openpyxl        (всё остальное — стандартная библиотека)
+
+LEGACY NOTICE: this entry point is frozen and keeps its original built-in
+keyword lists. The launcher and connector sweep use config/keywords.xlsx.
 """
 
 import argparse
@@ -705,6 +708,10 @@ def main():
                     help="принудительно офлайн-эвристика вместо Claude")
     args = ap.parse_args()
 
+    print(
+        "WARNING: tenderfinder_agent2.py is a frozen legacy entry point and "
+        "still uses built-in keyword lists; use the main launcher for keywords.xlsx."
+    )
     print("TENDER_FINDER Agent #2 — Future Projects\n" + "=" * 40)
 
     # 1. Сбор

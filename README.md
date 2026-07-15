@@ -59,6 +59,7 @@ buildmatch-tender-finder/
 |-- 01 Code/
 |   |-- tenderfinder_agent2.py    legacy standalone future-project pipeline
 |   `-- CONNECTOR_SWEEP/
+|       |-- tenderfinder_keywords_config.py
 |       |-- tenderfinder_guards.py
 |       |-- tenderfinder_raw_sweep.py
 |       |-- tenderfinder_demo_three_buckets.py
@@ -77,6 +78,7 @@ buildmatch-tender-finder/
 |-- 05_PROMPTS/
 |-- 06 QA/
 |-- demo_data/                    documentation only; `.eml` files excluded
+|-- config/                       company profile + editable keyword workbooks
 |-- docs/                         current and historical reports
 |-- inputs/                       packaged synthetic review workbook
 |-- latest_verified_output/       packaged synthetic reference output
@@ -95,17 +97,61 @@ Windows launch scripts required by the portable workflow.
 
 ## Scoring entry points
 
-- `tenderfinder_guards.py` contains the primary deterministic fit scoring and
+- `tenderfinder_keywords_config.py` strictly loads and validates the shared
+  company profile and active rules in `config/keywords.xlsx`.
+- `tenderfinder_guards.py` applies the configured deterministic fit scoring and
   source/layer guards.
 - `tenderfinder_raw_sweep.py` collects, normalizes, routes, and applies source-
-  specific filters.
+  specific filters, including configured Vancouver signal word lists.
 - `tenderfinder_demo_three_buckets.py` builds active/future/watch outputs and
-  contains tender/civil matching rules.
+  applies the configured tender/civil matching rules.
 - `tenderfinder_agent2.py` is an older standalone scorer that optionally reads
-  `ANTHROPIC_API_KEY` from the process environment.
+  `ANTHROPIC_API_KEY` from the process environment. It is frozen legacy code:
+  it keeps its own built-in keyword lists and does not read `keywords.xlsx`.
 
-Keyword externalization is intentionally not part of this repository-prep
-change; current scoring behavior is preserved exactly.
+Scores, tiers, gates, and labels always reflect current `keywords.xlsx`.
+Editing rules changes **all records'** evaluation on the next run, including
+previously collected records. Stored review-workbook `fit_score` values are
+audit inputs only: the main pipeline recomputes current score, signal quality,
+and score-based routing before it builds any output. Records that no longer
+meet the Future Projects gate remain visible in the run log/build report and
+previously tracked Outreach rows keep their user-owned follow-up fields.
+
+Historical packaged values such as 74, 81, and 65 were snapshot-era scores
+copied by the old replay stage. They are intentionally superseded by the
+current workbook on every run; they are not a compatibility target.
+
+Documented limits are narrow. `tenderfinder_agent2.py` remains static. A
+replayed Vancouver permit can refresh its score and labels, but its special
+permit tier remains stored if the old review workbook lacks the raw permit
+attributes that tier requires. Tender candidates that were never persisted
+cannot be retroactively rescored; newly parsed tender rows always use the
+current configuration.
+
+## Configuring for your company
+
+1. Keep `config/keywords_template.xlsx` unchanged as the clean handoff copy.
+2. Copy it to `config/keywords.xlsx` and fill in `Company_Profile`: company
+   name, regions, preferred work types, and known clients (one value per row).
+3. Optionally tune the `Keywords` sheet. Its dropdowns show the allowed match
+   types, categories, and Y/N active state; the `Instructions` sheet includes
+   worked examples. `exact` means trimmed, case-insensitive equality against
+   any preserved business field (for example, the full title), not equality
+   against one concatenated record blob.
+4. In the launcher, click **Validate keywords**. A bad or missing workbook
+   stops the run with a row-specific message; there is no hidden fallback.
+5. Run TENDER_FINDER normally after validation passes.
+
+Profile values create sensible defaults: regions become geography/+8 rules,
+work types become positive/+9 rules, and known clients become client/+6 rules.
+If the same normalized `(keyword, category)` is also present in `Keywords`,
+that explicit row wins, including when it is set to `active = N`.
+
+The pre-filled live workbook reproduces the original Tybo behavior: base score
+35, +9 per positive hit, -12 per negative hit, one +8 geography bonus, one +6
+known-client bonus, and the same 0-100 cap, civil gates, and Vancouver routing
+thresholds. Only the Vancouver word lists are editable; their thresholds stay
+in code.
 
 ## Known issues
 
@@ -124,8 +170,8 @@ keys from environment variables or an ignored local env file. Runtime-created
 `.venv/`, `user_data/`, `demo_history/`, logs, email messages, databases, and
 ZIP archives are ignored.
 
-Live fetching, scoring changes, BuildMatch/Neon integration, Git remotes, and
-publishing are outside the scope of this snapshot preparation.
+Live connector changes, BuildMatch/Neon integration, Git remotes, and publishing
+are outside the scope of this configuration change.
 
 comand in termainal:  
 git add .

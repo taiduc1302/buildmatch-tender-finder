@@ -59,6 +59,12 @@ from tenderfinder_source_backlog import (
     append_source_roadmap_printable_sheet,
     cross_check_counts as backlog_cross_check_counts,
 )
+from tenderfinder_keywords_config import (
+    KeywordConfigError,
+    load_keywords_config,
+    print_validation_summary,
+)
+import tenderfinder_guards as G
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -96,6 +102,11 @@ BASELINE = {
     "coded_sources": 17,
     "source_register": 159,
 }
+RESCORE_ALWAYS_FUTURE_MIN_FIT = 50
+RESCORE_ALWAYS_SUMMARY = (
+    "Scores, tiers, gates, and labels always reflect current keywords.xlsx. "
+    "Editing rules changes ALL records' evaluation on next run, including previously collected ones."
+)
 P511_CORRECTED_FUTURE_COUNT = 7537
 
 # Task E (product): stage-safe pause support. The GUI's Pause button touches
@@ -160,142 +171,6 @@ def maybe_pause_at_checkpoint(out_dir: Path, stage: str) -> None:
         flush=True,
     )
     raise SystemExit(PAUSE_EXIT_CODE)
-
-TENDER_KEYWORDS = (
-    "tender",
-    "rfp",
-    "rfq",
-    "bid",
-    "opportunity",
-    "contract",
-    "procurement",
-    "request for",
-    "expression of interest",
-    "eoi",
-    "itt",
-    "invitation to tender",
-    "request for quotation",
-    "request for proposal",
-    "call for",
-    "proposal",
-)
-
-CIVIL_KEYWORDS = (
-    "civil",
-    "earthwork",
-    "excavat",
-    "grading",
-    "site servic",
-    "underground",
-    "utility",
-    "utilities",
-    "water",
-    "potable",
-    "watercourse",
-    "watermain",
-    "water main",
-    "sewer",
-    "sanitary",
-    "sanitary main",
-    "storm",
-    "storm main",
-    "drainage",
-    "road",
-    "paving",
-    "curb",
-    "sidewalk",
-    "bridge",
-    "infrastructure",
-    "pump station",
-    "lift station",
-    "trench",
-    "pipe",
-    "culvert",
-    "erosion",
-    "slope",
-    "embankment",
-    "fill",
-    "compaction",
-    "geotechnical",
-    "aggregate",
-    "subgrade",
-    "catchbasin",
-    "catch basin",
-    "manhole",
-    "tie-in",
-    "tie in",
-    "utility corridor",
-    "right-of-way",
-    "right of way",
-    "dyke",
-    "dike",
-    "forcemain",
-    "force main",
-    "reservoir",
-)
-
-# Generic maintenance/equipment terms that, on their own, are not specific
-# enough to count as civil work (mechanical/HVAC/marine/IT equipment
-# servicing matched these historically without being civil construction).
-NEGATIVE_CIVIL_TERMS = (
-    "bearing",
-    "pedestal",
-    "compressor",
-    "hvac",
-    "hydronic heating equipment",
-    "elevator",
-    "vehicle",
-    "fleet maintenance",
-    "it equipment",
-    "radio",
-    "furniture",
-    "vessel",
-    "marine vessel",
-    "refrigeration",
-    "main engines",
-    "seawater",
-    "hot water tank",
-    "boiler",
-    "metering technology",
-    "meter reading system",
-    "misting station",
-    "water fountain",
-    "mist generator",
-    "domestic hot water",
-    "spray park",
-    "heat pump",
-    "pressure washing",
-)
-
-# CIVIL_KEYWORDS entries that are too generic on their own to confirm civil
-# work when a NEGATIVE_CIVIL_TERMS hit is also present in the title (e.g.
-# "water" alone matches both "Water Treatment Plant" and "Domestic Hot
-# Water Tank Replacement"; "pipe" alone matches both watermain work and
-# "Seawater Cooling Piping" on a ship's engine). Everything else in
-# CIVIL_KEYWORDS is specific enough to override a negative-term match.
-WEAK_CIVIL_KEYWORDS = ("water", "infrastructure", "pipe")
-
-# Opportunity types that are never civil construction regardless of any
-# other keyword match, because the match came from something incidental
-# (e.g. a street address in the title) rather than the scope of work
-# itself - confirmed example: "Land Disposition for Mixed-Use Development
-# - ... Happy Valley Road" matched on "road" from the street address, but
-# a land disposition is a real-estate sale/lease, not construction work.
-OPPORTUNITY_TYPE_EXCLUSIONS = (
-    "land disposition",
-)
-
-# CIVIL_KEYWORDS entries that are prone to false substring matches inside
-# unrelated words in BC Bid commodity-category text - confirmed examples:
-# "road" inside "Broadcasting" (an IT/AV commodity category, e.g.
-# "Information Technology Broadcasting and Telecommunications"), and
-# "fill" inside "Landfill" (a waste-facility noun, unrelated to earthworks
-# fill material). These substrings are stripped before the keyword check
-# so the collision can't register as a civil-relevant match.
-CIVIL_KEYWORD_SUBSTRING_COLLISIONS: dict[str, tuple[str, ...]] = {
-    "road": ("broadcast", "broadcasting", "abroad"),
-    "fill": ("landfill",),
-}
 
 LOGIN_PLATFORM_HOSTS = (
     "bidsandtenders.ca",
@@ -1024,6 +899,8 @@ class DemoData:
     fit_ge_60: int = 0
     fit_60_69: int = 0
     fit_50_59: int = 0
+    keyword_rescore_events: list[dict[str, Any]] = field(default_factory=list)
+    keyword_below_gate: list[dict[str, Any]] = field(default_factory=list)
     read_seconds: float = 0.0
 
 
@@ -1413,6 +1290,62 @@ def extract_applicant_name(raw: dict[str, Any]) -> str:
     return ""
 
 
+def _keyword_scoring_fields(raw: dict[str, Any], enrichment: dict[str, Any] | None = None) -> list[Any]:
+    fields = [
+        raw.get(key)
+        for key in (
+            "project_id", "title", "project_title", "municipality", "app_no", "address",
+            "owner/applicant", "owner_applicant", "owner", "applicant", "developer",
+            "proponent", "applicant_name", "app_type_stage", "scope_summary",
+            "expected_civil", "next_milestone", "notes",
+        )
+    ]
+    if enrichment:
+        fields.extend((enrichment.get("attributes") or {}).values())
+    return [value for value in fields if value not in (None, "")]
+
+
+def _coerce_write_eligible(value: Any) -> bool:
+    return clean_text(value).casefold() in {"1", "true", "yes", "y"}
+
+
+def _rescore_route(raw: dict[str, Any], source_id: str, fit_score: int) -> tuple[str, bool, str, int | None, str]:
+    stored_route = clean_text(raw.get("proposed_route"))
+    stored_hold = clean_text(raw.get("hold_reason"))
+    if source_id == "van_building_permits":
+        # Historical review rows do not retain the raw permit attributes needed
+        # by _van_permit_fit_tier. Keep that non-score tier only; score and labels
+        # still refresh from the normalized fields that are available.
+        return stored_route, _coerce_write_eligible(raw.get("write_eligible")), stored_hold, None, "van_raw_attributes_not_persisted"
+
+    threshold: int | None = None
+    score_gated_future = stored_route == "Future_Projects"
+    if stored_route == "Run_Queue":
+        match = re.search(r"fit_score_below_min_(\d+)", stored_hold)
+        if match:
+            threshold = int(match.group(1))
+            score_gated_future = True
+        elif stored_hold.startswith("rescore_fit_below_"):
+            threshold = RESCORE_ALWAYS_FUTURE_MIN_FIT
+            score_gated_future = True
+
+    if score_gated_future:
+        threshold = threshold or RESCORE_ALWAYS_FUTURE_MIN_FIT
+        if fit_score < threshold:
+            return "Run_Queue", False, f"rescore_fit_below_{threshold}", threshold, ""
+        return "Future_Projects", True, "", threshold, ""
+    return stored_route, _coerce_write_eligible(raw.get("write_eligible")), stored_hold, threshold, ""
+
+
+def _rule_attribution(rule: Any) -> dict[str, Any]:
+    return {
+        "keyword": rule.keyword,
+        "match_type": rule.match_type,
+        "weight": rule.weight,
+        "category": rule.category,
+    }
+
+
 def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None) -> dict[str, Any]:
     source_id = raw.get("source_id") or raw.get("_source_id") or ""
     original_address = clean_text(raw.get("address"))
@@ -1437,6 +1370,18 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
         address_source = "EXTRACTED"
     scale = extract_scale(original_scope)
     status_class = status_class_for(source_id, stage)
+    scoring_fields = _keyword_scoring_fields(raw, enrichment)
+    scoring_blob = " ".join(str(value) for value in scoring_fields)
+    score_breakdown = G.score_civil_fit_breakdown(
+        scoring_blob,
+        raw.get("municipality") or "",
+        match_fields=scoring_fields,
+    )
+    stored_score = coerce_int(raw.get("fit_score"))
+    current_score = score_breakdown["fit_score"]
+    route, write_eligible, hold_reason, threshold, rescore_exception = _rescore_route(
+        raw, source_id, current_score
+    )
     row = {
         "municipality": raw.get("municipality") or "",
         "app_no": raw.get("app_no") or "",
@@ -1446,7 +1391,7 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
         "app_type_stage": stage,
         "status_class": status_class,
         "scope_summary": original_scope,
-        "fit_score": coerce_int(raw.get("fit_score")),
+        "fit_score": current_score,
         "scale": scale["scale"],
         "est_units": scale["est_units"],
         "est_storeys": scale["est_storeys"],
@@ -1454,7 +1399,9 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
         "source": raw.get("source_name") or raw.get("source_id") or "",
         "source_id": source_id,
         "source_url": raw.get("source_url") or raw.get("evidence_url") or "",
-        "route": raw.get("proposed_route") or "",
+        "route": route,
+        "write_eligible": write_eligible,
+        "hold_reason": hold_reason,
         "applicant_name": extract_applicant_name(raw),
     }
     row["detail_available"] = "YES" if is_detail_available(row["scope_summary"]) else "NO"
@@ -1466,6 +1413,25 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
         **row,
         "address": original_address,
     })
+    row["_keyword_rescore"] = {
+        "lead_id": row["lead_id"],
+        "app_no": row["app_no"],
+        "source_id": source_id,
+        "old_score": stored_score,
+        "new_score": current_score,
+        "old_route": clean_text(raw.get("proposed_route")),
+        "new_route": route,
+        "threshold": threshold,
+        "below_gate": route == "Run_Queue" and hold_reason.startswith("rescore_fit_below_"),
+        "exception": rescore_exception,
+        "raw_pre_cap": score_breakdown["raw_score"],
+        "geography_weight": score_breakdown["geography_weight"],
+        "client_weight": score_breakdown["client_weight"],
+        "positive_matches": [_rule_attribution(rule) for rule in score_breakdown["positive_matches"]],
+        "negative_matches": [_rule_attribution(rule) for rule in score_breakdown["negative_matches"]],
+        "geography_matches": [_rule_attribution(rule) for rule in score_breakdown["geography_matches"]],
+        "client_matches": [_rule_attribution(rule) for rule in score_breakdown["client_matches"]],
+    }
     return row
 
 
@@ -1495,11 +1461,15 @@ def read_track_a(review_xlsx: Path) -> DemoData:
 
     for values in rows:
         raw = dict(zip(headers, values))
-        route = raw.get("proposed_route")
         source_id = raw.get("source_id") or raw.get("_source_id") or ""
         app_no = clean_text(raw.get("app_no"))
         enrichment = enrichments.get(source_id, {}).get(app_no)
         row = normalized_row(raw, enrichment)
+        rescore_event = row.get("_keyword_rescore") or {}
+        data.keyword_rescore_events.append(rescore_event)
+        if rescore_event.get("below_gate"):
+            data.keyword_below_gate.append(rescore_event)
+        route = row.get("route")
         if source_id in {"surrey_devapps_v2", "abbotsford_devapps"}:
             stats = data.address_recovery.setdefault(source_id, {"EXTRACTED": 0, "CENTROID": 0, "NONE": 0, "ORIGINAL": 0})
             stats[row["address_source"]] = stats.get(row["address_source"], 0) + 1
@@ -1656,6 +1626,13 @@ def apply_run_history(data: DemoData, history_dir: Path = DEMO_HISTORY_DIR) -> N
         if not lead_id:
             continue
         data.prior_outreach[lead_id] = {
+            "lead_id": lead_id,
+            "type": clean_text(item.get("type")) or "LEAD",
+            "municipality": item.get("municipality") or "",
+            "title_or_address": item.get("title_or_address") or "",
+            "fit_score": item.get("fit_score") or "",
+            "signal_quality": item.get("signal_quality") or "",
+            "contact": item.get("contact") or "",
             "status": clean_text(item.get("status")) or "Not Contacted",
             "last_contact_date": item.get("last_contact_date") or "",
             "next_action_date": item.get("next_action_date") or "",
@@ -1783,54 +1760,28 @@ def fetch_url(url: str, timeout: int = 20, retries: int = 1) -> tuple[str, int, 
 
 
 def tender_keyword_match(text: str) -> bool:
-    low = text.lower()
-    phrase_patterns = [
-        r"\btenders?\b",
-        r"\brfps?\b",
-        r"\brfqs?\b",
-        r"\bbids?\b",
-        r"\bopportunit(?:y|ies)\b",
-        r"\bcontracts?\b",
-        r"\bprocurement\b",
-        r"\brequest for\b",
-        r"\bexpression of interest\b",
-        r"\beoi\b",
-        r"\bitt\b",
-        r"\binvitation to tender\b",
-        r"\brequest for quotation\b",
-        r"\brequest for proposal\b",
-        r"\bproposal deadline\b",
-        r"\bclosing date\b",
-    ]
-    reference_patterns = [
-        r"\b(?:rfp|rfq|itt|eoi)\s*[-#: ]+\w+",
-        r"\b\d{3,5}-\d{2,5}-\d{2,4}(?:-\d{1,4})?\b",
-    ]
-    return any(re.search(pattern, low) for pattern in phrase_patterns + reference_patterns)
+    return load_keywords_config().matches_any("tender_match", text)
 
 
 def _strip_civil_keyword_collisions(text_low: str) -> str:
-    """Remove the unrelated words a CIVIL_KEYWORDS entry is known to false-
-    match inside (see CIVIL_KEYWORD_SUBSTRING_COLLISIONS) before checking
-    for that keyword, so e.g. "road" inside "Broadcasting" or "fill" inside
-    "Landfill" can't register as a civil-relevant hit."""
-    for collisions in CIVIL_KEYWORD_SUBSTRING_COLLISIONS.values():
-        for word in collisions:
-            text_low = text_low.replace(word, "")
+    """Strip configured unrelated words before civil substring matching."""
+    for word in load_keywords_config().collision_terms():
+        text_low = text_low.replace(word, "")
     return text_low
 
 
 def _civil_keyword_hits(text_low: str) -> list[str]:
     stripped = _strip_civil_keyword_collisions(text_low)
-    return [k for k in CIVIL_KEYWORDS if k in stripped]
+    return [rule.keyword for rule in load_keywords_config().matching_rules("gate_include", stripped)]
 
 
 def civil_keyword_match(text: str, title: str = "") -> bool:
+    config = load_keywords_config()
     low = text.lower()
     if not _civil_keyword_hits(low):
         return False
     title_low = (title or text).lower()
-    if any(term in title_low for term in OPPORTUNITY_TYPE_EXCLUSIONS):
+    if any(rule.matches(title_low) for rule in config.exclusion_rules("absolute_title")):
         return False
     # A negative term in the title (the actual subject of the opportunity)
     # without a STRONG civil keyword also present in the title means the
@@ -1839,9 +1790,10 @@ def civil_keyword_match(text: str, title: str = "") -> bool:
     # construction and repair service" commodity tag applied to a marine
     # bearings RFP, or "water" matching both a Water Treatment Plant and a
     # building's "Domestic Hot Water Tank" replacement).
-    if any(n in title_low for n in NEGATIVE_CIVIL_TERMS):
+    if any(rule.matches(title_low) for rule in config.exclusion_rules("negative_title")):
         title_hits = _civil_keyword_hits(title_low)
-        strong_hit_in_title = any(k not in WEAK_CIVIL_KEYWORDS for k in title_hits)
+        weak_keywords = {rule.keyword.casefold() for rule in config.rules_for("gate_weak")}
+        strong_hit_in_title = any(keyword.casefold() not in weak_keywords for keyword in title_hits)
         if not strong_hit_in_title:
             return False
     return True
@@ -3759,6 +3711,24 @@ def build_outreach_rows(data: DemoData, tenders: list[TenderCandidate]) -> list[
             "notes": prior.get("notes") or "",
         })
 
+    active_ids = {clean_text(row.get("lead_id")) for row in rows}
+    for lead_id, prior in data.prior_outreach.items():
+        if lead_id in active_ids:
+            continue
+        rows.append({
+            "lead_id": lead_id,
+            "type": prior.get("type") or "LEAD",
+            "municipality": prior.get("municipality") or "",
+            "title_or_address": prior.get("title_or_address") or "",
+            "fit_score": prior.get("fit_score") or "",
+            "signal_quality": "BELOW_CURRENT_GATE",
+            "contact": prior.get("contact") or "",
+            "status": prior.get("status") or "Not Contacted",
+            "last_contact_date": prior.get("last_contact_date") or "",
+            "next_action_date": prior.get("next_action_date") or "",
+            "notes": prior.get("notes") or "",
+        })
+
     def sort_key(item: dict[str, Any]) -> tuple[int, int, int]:
         not_contacted = 0 if item.get("status") == "Not Contacted" else 1
         high = 0 if item.get("signal_quality") == "HIGH" else 1
@@ -4747,6 +4717,16 @@ def write_build_report(path: Path, data: DemoData, tenders: list[TenderCandidate
     email_history = [t for t in email_signal_rows if t.retention_target == "history"]
     email_other = [t for t in email_signal_rows if t.retention_target not in {"bid_now", "history"}]
     email_fixture_source = bool(email_log and (is_fixture_source_folder(email_log.url) or "source_mode=fixture_synthetic" in (email_log.note or "")))
+    below_gate_lines = "\n".join(
+        "- {lead_id} / {app_no}: score {old_score} -> {new_score}; threshold={threshold}; route={new_route}".format(**event)
+        for event in data.keyword_below_gate
+    ) or "- None."
+    rescore_exceptions: dict[str, int] = {}
+    for event in data.keyword_rescore_events:
+        exception = clean_text(event.get("exception"))
+        if exception:
+            rescore_exceptions[exception] = rescore_exceptions.get(exception, 0) + 1
+    exception_text = ", ".join(f"{name}={count}" for name, count in sorted(rescore_exceptions.items())) or "none"
     text = f"""# TENDER_FINDER Demo Build Report - Patch {PATCH_VERSION}
 
 ## Outputs
@@ -4759,6 +4739,15 @@ def write_build_report(path: Path, data: DemoData, tenders: list[TenderCandidate
 - Priority queue: fit >= 60 => {data.fit_ge_60}; fit >= 70 => {data.fit_ge_70}
 - Outreach Tracker rows: {data.outreach_rollup.get('tracked', 0)}
 - Developer/applicant names identified: {data.developer_distinct}
+
+## Keyword RESCORE_ALWAYS
+
+- {RESCORE_ALWAYS_SUMMARY}
+- Records rescored from preserved normalized fields: {len(data.keyword_rescore_events)}
+- Records routed below the current Future_Projects gate: {len(data.keyword_below_gate)}
+- Documented replay exceptions: {exception_text}
+
+{below_gate_lines}
 
 ## Email Alert Intake
 
@@ -6610,8 +6599,14 @@ def _load_prior_preserved_fields(prior_master_path: Path | None) -> dict[str, di
             lid = row.get("lead_id")
             if lid:
                 result["outreach"][str(lid)] = {
+                    "lead_id": row.get("lead_id"), "type": row.get("type"),
+                    "municipality": row.get("municipality"), "title_or_address": row.get("title_or_address"),
+                    "fit_score": row.get("fit_score"), "signal_quality": row.get("signal_quality"),
+                    "contact": row.get("contact"),
                     "status": row.get("status"), "last_contact_date": row.get("last_contact_date"),
                     "next_action_date": row.get("next_action_date"), "notes": row.get("notes"),
+                    "source": row.get("source"), "source_url": row.get("source_url"),
+                    "source_sheet": row.get("source_sheet"),
                 }
     return result
 
@@ -6737,16 +6732,9 @@ USER_FUTURE_PROJECTS_HEADERS = [
     "Status", "Notes",
 ]
 
-_CIVIL_RELEVANCE_KEYWORDS = (
-    "servicing", "excavation", "utilit", "water main", "storm", "sanitary", "roadwork",
-    "curb", "sidewalk", "concrete", "bridge", "municipal civil", "grading", "earthwork",
-    "subdivision", "site prep",
-)
-
-
 def _lead_civil_relevance(row: dict[str, Any]) -> str:
-    text = f"{row.get('scope_summary') or ''} {row.get('app_type_stage') or ''}".lower()
-    return "Likely Civil/Servicing" if any(kw in text for kw in _CIVIL_RELEVANCE_KEYWORDS) else "Unclear"
+    text = f"{row.get('scope_summary') or ''} {row.get('app_type_stage') or ''}"
+    return "Likely Civil/Servicing" if load_keywords_config().matches_any("label_civil", text) else "Unclear"
 
 
 def _lead_recommended_action(row: dict[str, Any]) -> str:
@@ -6869,7 +6857,30 @@ def build_user_outreach_tracker_rows(
             "source_sheet": "Future_Projects",
         })
 
-    rows = rows[:limit]
+    current_ids = {clean_text(row.get("lead_id")) for row in rows}
+    retained_rows: list[dict[str, Any]] = []
+    for lead_id, prior in prior_lookup.items():
+        if clean_text(lead_id) in current_ids:
+            continue
+        retained_rows.append({
+            "lead_id": lead_id,
+            "type": prior.get("type") or "LEAD",
+            "municipality": prior.get("municipality") or "",
+            "title_or_address": prior.get("title_or_address") or "",
+            "fit_score": prior.get("fit_score") or "",
+            "signal_quality": "BELOW_CURRENT_GATE",
+            "contact": prior.get("contact") or "",
+            "status": prior.get("status") or "Not Contacted",
+            "last_contact_date": prior.get("last_contact_date") or "",
+            "next_action_date": prior.get("next_action_date") or "",
+            "notes": prior.get("notes") or "",
+            "source": prior.get("source") or "UNKNOWN_SOURCE",
+            "source_url": prior.get("source_url") or "UNKNOWN_SOURCE",
+            "source_sheet": "Prior Outreach (below current gate)",
+        })
+
+    new_row_limit = max(0, limit - len(retained_rows))
+    rows = rows[:new_row_limit] + retained_rows
     return [[r[h] for h in OUTREACH_TRACKER_HEADERS] for r in rows]
 
 
@@ -6948,7 +6959,8 @@ def build_user_dashboard(ws, counts: dict[str, Any], run_timestamp: str) -> None
     title_font, section_font = Font(bold=True, size=14), Font(bold=True, size=12)
     wrap = Alignment(vertical="top", wrap_text=True)
 
-    ws["A1"] = "TENDER_FINDER Tender Intelligence — Dashboard"
+    company_name = load_keywords_config().company_name
+    ws["A1"] = f"{company_name} — TENDER_FINDER Tender Intelligence — Dashboard"
     ws["A1"].font = title_font
     ws["A2"] = "Last run"
     ws["B2"] = run_timestamp
@@ -7424,6 +7436,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     global LAST_BC_BID_OFFICIAL_FINDINGS
     args = parse_args()
+    try:
+        keyword_config = load_keywords_config(force_reload=True)
+    except KeywordConfigError as exc:
+        print(f"ERROR: {exc}", flush=True)
+        return 2
+    print_validation_summary(keyword_config)
     total_start = time.perf_counter()
     review_xlsx = Path(args.review_xlsx)
     if not review_xlsx.is_absolute():
@@ -7444,6 +7462,19 @@ def main() -> int:
         print(f"demo_history_archived_pre_5_11={[p.name for p in archived_history]}", flush=True)
     print("TENDER_FINDER_STAGE: Reading proven Track A development-project workbook", flush=True)
     data = read_track_a(review_xlsx)
+    print(f"KEYWORDS_RESCORE_ALWAYS: {RESCORE_ALWAYS_SUMMARY}", flush=True)
+    print(
+        f"KEYWORDS_RESCORE_ALWAYS: rescored={len(data.keyword_rescore_events)} below_gate={len(data.keyword_below_gate)}",
+        flush=True,
+    )
+    for event in data.keyword_below_gate:
+        print(
+            "KEYWORDS_BELOW_GATE: "
+            f"lead_id={event.get('lead_id')} app_no={event.get('app_no')} "
+            f"old_score={event.get('old_score')} new_score={event.get('new_score')} "
+            f"threshold={event.get('threshold')} route={event.get('new_route')}",
+            flush=True,
+        )
     apply_run_history(data)
     print(f"future={len(data.future)} watch={len(data.watch)} analyzed={len(data.analyzed)} (read in {data.read_seconds:.2f}s)", flush=True)
     record_stage(out_dir, "track_a_loaded")

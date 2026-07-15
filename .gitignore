@@ -13,6 +13,7 @@ demo_history/
 .env
 .env.*
 *.log
+config/keywords_validation_last.txt
 *.tmp
 ~$*.xlsx
 .aider*
@@ -31,6 +32,5 @@ TENDER_FINDER_Handoff_Package*/
 TENDER_FINDER_CLEAN_RUNTIME_PACKAGE/
 p54pkg*/
 verify_p54_final/
-01 Code/CONNECTOR_SWEEP/raw_runs/*/csv/
-01 Code/CONNECTOR_SWEEP/raw_runs/*/json/
+01 Code/CONNECTOR_SWEEP/raw_runs/
 CLAUDE_FIX_PROMPT_patch-*.md

@@ -55,11 +55,17 @@ from tenderfinder_email_intake import (  # noqa: E402
     test_email_intake,
 )
 from tenderfinder_package_paths import (  # noqa: E402
+    config_root,
     detect_package_root,
     email_inbox_dir,
     email_processed_dir,
     email_rejected_dir,
     ensure_email_alert_dirs,
+)
+from tenderfinder_keywords_config import (  # noqa: E402
+    KeywordConfigError,
+    load_keywords_config,
+    validation_summary,
 )
 
 ROOT_DIR = detect_package_root(SCRIPT_DIR)
@@ -105,6 +111,41 @@ def open_path_with_default_app(path: str) -> None:
         subprocess.Popen(["open", path])
     else:
         subprocess.Popen(["xdg-open", path])
+
+
+def keywords_folder(root: Path = ROOT_DIR) -> Path:
+    """Return the package-local folder a founder opens to edit keywords."""
+    return config_root(root)
+
+
+RESCORE_ALWAYS_SUMMARY = (
+    "Scores, tiers, gates, and labels always reflect current keywords.xlsx. "
+    "Editing rules changes ALL records' evaluation on next run, including previously collected ones."
+)
+RESCORE_ALWAYS_EXCEPTIONS = (
+    "Exceptions: legacy tenderfinder_agent2.py is static; replayed Vancouver permit tiers stay stored "
+    "when raw permit attributes are unavailable; tender rows that were never persisted cannot be rescored."
+)
+
+
+def validate_keywords_for_gui(root: Path = ROOT_DIR, *, force_reload: bool = True) -> dict[str, Any]:
+    """Headless validation helper used by both the GUI and unit tests."""
+    config = load_keywords_config(root=root, force_reload=force_reload)
+    return {
+        "path": str(config.path),
+        "company_name": config.company_name,
+        "active_keyword_count": config.active_keyword_count,
+        "summary": validation_summary(config),
+        "rescore_semantics": RESCORE_ALWAYS_SUMMARY,
+        "rescore_exceptions": RESCORE_ALWAYS_EXCEPTIONS,
+    }
+
+
+def keyword_profile_status(root: Path = ROOT_DIR) -> str:
+    try:
+        return validate_keywords_for_gui(root, force_reload=False)["summary"]
+    except KeywordConfigError as exc:
+        return f"Keywords invalid: {exc.errors[0] if exc.errors else 'validation failed'}"
 
 
 def classify_log_line(line: str) -> str:
@@ -592,8 +633,11 @@ class TenderFinderLauncherApp:
         except Exception:
             pass
 
+        self.company_profile_var = tk.StringVar(value=keyword_profile_status(ROOT_DIR))
         header = ttk.Label(self.root, text="TENDER_FINDER Tender Intelligence", font=(UI_FONT, 16, "bold"))
         header.grid(row=0, column=0, sticky="w", padx=12, pady=(12, 2))
+        profile_header = ttk.Label(self.root, textvariable=self.company_profile_var, font=(UI_FONT, 9, "bold"))
+        profile_header.grid(row=0, column=0, sticky="e", padx=12, pady=(12, 2))
         subtitle = ttk.Label(
             self.root,
             text="Compact launcher for the tender sweep, Email Alert Intake, source checks, and post-run results.",
@@ -679,6 +723,13 @@ class TenderFinderLauncherApp:
         ttk.Label(actions, textvariable=self.mode_summary_var, font=(UI_FONT, 9)).grid(row=1, column=4, columnspan=2, sticky="e", padx=6, pady=(0, 8))
         self.progress = ttk.Progressbar(actions, mode="indeterminate")
         self.progress.grid(row=1, column=6, columnspan=2, sticky="ew", padx=(6, 10), pady=(0, 8))
+        self.open_keywords_button = ttk.Button(actions, text="Open keywords folder", command=self._on_open_keywords_folder)
+        self.open_keywords_button.grid(row=2, column=0, sticky="ew", padx=(10, 6), pady=(0, 10))
+        self.validate_keywords_button = ttk.Button(actions, text="Validate keywords", command=self._on_validate_keywords)
+        self.validate_keywords_button.grid(row=2, column=1, sticky="ew", padx=6, pady=(0, 10))
+        ttk.Label(actions, text="Edit the live workbook, validate it, then run.", font=(UI_FONT, 9), justify="left").grid(
+            row=2, column=2, columnspan=6, sticky="w", padx=(6, 10), pady=(0, 10)
+        )
 
         output = ttk.LabelFrame(self.run_tab, text="Post-Run Actions")
         output.grid(row=1, column=0, sticky="ew", pady=(10, 0))
@@ -865,6 +916,30 @@ class TenderFinderLauncherApp:
         if chosen:
             self.out_dir_var.set(chosen)
             self._refresh_output_path_display()
+
+    def _on_open_keywords_folder(self) -> None:
+        folder = keywords_folder(ROOT_DIR)
+        if not folder.exists():
+            self.messagebox.showerror(
+                "Keywords folder missing",
+                f"The configuration folder is missing:\n{folder}\n\nRestore it from the package before running TENDER_FINDER.",
+            )
+            return
+        open_path_with_default_app(str(folder))
+
+    def _on_validate_keywords(self) -> None:
+        try:
+            result = validate_keywords_for_gui(ROOT_DIR, force_reload=True)
+        except KeywordConfigError as exc:
+            self.company_profile_var.set(keyword_profile_status(ROOT_DIR))
+            self.messagebox.showerror("Keywords validation failed", str(exc))
+            return
+        self.company_profile_var.set(result["summary"])
+        self.messagebox.showinfo(
+            "Keywords are valid",
+            f"{result['summary']}\n\n{result['rescore_semantics']}\n\n"
+            f"{result['rescore_exceptions']}\n\nWorkbook:\n{result['path']}",
+        )
 
     def _selected_email_folder(self) -> Path:
         ensure_email_alert_dirs(ROOT_DIR)
@@ -1220,6 +1295,14 @@ class TenderFinderLauncherApp:
         out_dir = Path(self.out_dir_var.get().strip())
         fast_mode = self.run_mode_var.get() == RUN_MODE_FAST
         ensure_email_alert_dirs(ROOT_DIR)
+        try:
+            keyword_result = validate_keywords_for_gui(ROOT_DIR, force_reload=True)
+        except KeywordConfigError as exc:
+            self.company_profile_var.set(keyword_profile_status(ROOT_DIR))
+            self._set_status("Run cancelled - keywords.xlsx did not pass validation.", urgent=True)
+            self.messagebox.showerror("Keywords validation failed", str(exc))
+            return
+        self.company_profile_var.set(keyword_result["summary"])
         self.mode_summary_var.set("Current mode: Fast Mode" if fast_mode else "Current mode: Full Live Sweep")
 
         review_xlsx, review_source = discover_review_xlsx(ROOT_DIR)

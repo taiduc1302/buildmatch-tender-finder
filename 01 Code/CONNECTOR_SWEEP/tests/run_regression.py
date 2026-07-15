@@ -76,7 +76,7 @@ class Regression:
         return code, output
 
     def compile_check(self):
-        return self.run_cmd("Python syntax compile", ["-m", "py_compile", "tenderfinder_raw_sweep.py", "tenderfinder_live_link_checker.py", "tenderfinder_surrey_inprocess.py", "tenderfinder_source_registry.py", "tenderfinder_master_io.py", "tenderfinder_guards.py", "tenderfinder_bulk_io.py", "tenderfinder_link_preflight.py"], "compile.log")[0] == 0
+        return self.run_cmd("Python syntax compile", ["-m", "py_compile", "tenderfinder_raw_sweep.py", "tenderfinder_live_link_checker.py", "tenderfinder_surrey_inprocess.py", "tenderfinder_source_registry.py", "tenderfinder_master_io.py", "tenderfinder_guards.py", "tenderfinder_keywords_config.py", "tenderfinder_bulk_io.py", "tenderfinder_link_preflight.py"], "compile.log")[0] == 0
 
     def list_check(self):
         code, out = self.run_cmd("Connector list", ["tenderfinder_raw_sweep.py", "--list"], "list.log")
@@ -282,6 +282,7 @@ class Regression:
         ok_all = True
         for script, label in [("tests/test_surrey_pdf_parser.py", "Surrey PDF parser (P0.1)"),
                               ("tests/test_routing_gates.py", "Van routing + write gates (P0.2/P0.4)"),
+                              ("tests/test_keywords_config.py", "Company profile + keyword configuration"),
                               ("tests/test_outreach_persistence.py", "Outreach merge-forward (Patch 5.10)"),
                               ("tests/test_developer_classification.py", "Developer/consultant classification (Patch 5.12)"),
                               ("tests/test_bc_bid_civil_scoring.py", "BC Bid civil keyword scoring (Patch 5.14)"),
