@@ -8,12 +8,13 @@
 4. Save or copy approved `.eml` alert files into the opened folder.
 5. Click `Test Email Import`.
 6. Review parsed and rejected counts.
-7. Click `Run Demo With Email Alerts`.
+7. Click `Run With Email Alerts`.
 
 ## Alternate Folder Option
 
 - You may click `Select Existing Email Folder` and choose a OneDrive or local folder instead.
-- TENDER_FINDER saves that selection in `user_data/tenderfinder_user_config.json` inside the runtime package.
+- TENDER_FINDER saves that selection in its isolated runtime settings under
+  `C:\tenderfinder_out`, not inside the program folder.
 
 ## Important Notes
 

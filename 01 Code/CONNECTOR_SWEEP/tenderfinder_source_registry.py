@@ -1,29 +1,286 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-tenderfinder_source_registry.py — Source_Register <-> connector-CSV bridge
-==================================================================
-Reads the BUSINESS source list (Source_Register tab of the master workbook) and
-the TECHNICAL endpoint list (tenderfinder_dev_app_endpoints.csv), reconciles them, and
-emits a sync report assigning every source a controlled status + next action.
+"""Canonical editable source registry for TENDER_FINDER.
 
-The master's Source_Register has NO source_id (sources are keyed by name); the
-connector CSV is keyed by source_id. This module bridges the two by name alias.
+``config/sources.csv`` is the single runtime source of truth for both tender
+and development tracks. This module strictly validates the registry, exposes
+active rows to both collection paths, and provides atomic add/edit/toggle
+operations used by the GUI.
 
-Sync statuses (handoff section 8):
-  ready_for_probe | ready_for_load | missing_connector | needs_exact_url |
-  manual_p3_only | paid_or_login_skip | access_test_required |
-  disabled_wrong_layer | endpoint_stale | blocked | not_automation_ready
-
-Dependency: openpyxl (only when reading the workbook).
+The lower compatibility section can still reconcile a historical
+``Source_Register`` worksheet with the canonical CSV for audit reports. Its
+name aliases are reference-only; they do not define normal runtime sources.
 """
 
 import csv
+import ipaddress
 import os
 import re
+from pathlib import Path
+from urllib.parse import urlparse
 
-# Map Source_Register names -> connector CSV source_id. Substring match,
-# checked longest-first so specific names win.
+from tenderfinder_package_paths import detect_package_root, sources_config_path
+
+
+REGISTRY_ENV_VAR = "TENDER_FINDER_SOURCES_CONFIG"
+SOURCE_COLUMNS = (
+    "source_id", "name", "track", "active", "adapter", "municipality", "url", "rss",
+    "url_variants", "no_retry", "category", "tier", "platform", "fetch_type", "endpoint",
+    "layer_index", "layer_keywords", "priority_tier", "access_status",
+    "automation_feasibility", "output_route", "prompt_type", "status", "last_probe_status",
+    "last_good_endpoint", "notes",
+)
+SOURCE_TRACKS = frozenset({"tender", "development"})
+TENDER_ADAPTERS = frozenset({"public_listing", "bc_bid_browser"})
+DEVELOPMENT_ADAPTERS = frozenset(
+    {
+        "arcgis_hub_discover", "arcgis_hub_item", "arcgis_map_discover",
+        "arcgis_rest_layer", "ods_v21", "surrey_planning_reports",
+    }
+)
+SOURCE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]{2,63}$")
+RESERVED_SOURCE_IDS = frozenset({"email_alert_intake"})
+
+
+class SourceRegistryError(RuntimeError):
+    """Raised when the founder-editable runtime source registry is unsafe."""
+
+    def __init__(self, path, errors):
+        self.path = Path(path)
+        self.errors = tuple(str(error) for error in errors)
+        details = "\n".join(f"  - {error}" for error in self.errors)
+        super().__init__(f"Source registry is invalid: {self.path}\n{details}")
+
+
+def resolve_registry_path(path=None, root=None):
+    if path:
+        return Path(path).expanduser().resolve()
+    override = os.environ.get(REGISTRY_ENV_VAR, "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    package_root = detect_package_root(Path(root).resolve() if root else None)
+    return sources_config_path(package_root).resolve()
+
+
+def _is_public_url(value):
+    parsed = urlparse(str(value or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return False
+    hostname = parsed.hostname.casefold().rstrip(".")
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+        return False
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return True
+    return not (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    )
+
+
+def _normalized_source_row(row):
+    out = {column: str(row.get(column, "") or "").strip() for column in SOURCE_COLUMNS}
+    out["source_id"] = out["source_id"].casefold()
+    out["track"] = out["track"].casefold()
+    out["active"] = out["active"].upper()
+    out["adapter"] = out["adapter"].casefold()
+    out["no_retry"] = (out["no_retry"] or "N").upper()
+    if not out["fetch_type"]:
+        out["fetch_type"] = out["adapter"]
+    if out["track"] == "development" and not out["endpoint"]:
+        out["endpoint"] = out["url"]
+    return out
+
+
+def source_readiness_errors(row):
+    """Return reasons why one row cannot be enabled or explicitly tested.
+
+    Disabled rows are allowed to be incomplete drafts in the canonical CSV.
+    This helper is the single readiness gate used when enabling/running them.
+    """
+    errors = []
+    if not row["name"]:
+        errors.append("name is required")
+    if row["track"] == "tender":
+        if not row["adapter"]:
+            errors.append("adapter is required")
+        elif row["adapter"] not in TENDER_ADAPTERS:
+            errors.append(
+                "custom adapter required; supported tender adapters are "
+                + ", ".join(sorted(TENDER_ADAPTERS))
+            )
+        if not _is_public_url(row["url"]):
+            errors.append("tender url must be a public http(s) URL")
+        if row["rss"] and not _is_public_url(row["rss"]):
+            errors.append("rss must be a public http(s) URL")
+        for variant in (part.strip() for part in row["url_variants"].split("|") if part.strip()):
+            if not _is_public_url(variant):
+                errors.append(f"invalid url_variants entry '{variant}'")
+    elif row["track"] == "development":
+        if not row["adapter"]:
+            errors.append("adapter is required")
+        elif row["adapter"] not in DEVELOPMENT_ADAPTERS:
+            errors.append(
+                "custom adapter required; supported development adapters are "
+                + ", ".join(sorted(DEVELOPMENT_ADAPTERS))
+            )
+        if not row["endpoint"]:
+            errors.append("development endpoint is required")
+        if row["url"] and "://" in row["url"] and not _is_public_url(row["url"]):
+            errors.append("development url must be a public http(s) URL when supplied")
+    return errors
+
+
+def _validate_rows(rows, path):
+    errors = []
+    seen = set()
+    for row_number, row in enumerate(rows, start=2):
+        sid = row["source_id"]
+        prefix = f"row {row_number}"
+        if not SOURCE_ID_RE.fullmatch(sid):
+            errors.append(f"{prefix}: source_id '{sid}' must use lowercase letters, numbers, and underscores")
+        if sid in RESERVED_SOURCE_IDS:
+            errors.append(f"{prefix}: source_id '{sid}' is reserved for an internal source")
+        if sid in seen:
+            errors.append(f"{prefix}: duplicate source_id '{sid}'")
+        seen.add(sid)
+        if row["track"] not in SOURCE_TRACKS:
+            errors.append(f"{prefix}: track must be tender or development")
+        if row["active"] not in {"Y", "N"}:
+            errors.append(f"{prefix}: active must be Y or N")
+        if row["no_retry"] not in {"Y", "N"}:
+            errors.append(f"{prefix}: no_retry must be Y or N")
+        if row["track"] in SOURCE_TRACKS and row["active"] == "Y":
+            errors.extend(f"{prefix}: {message}" for message in source_readiness_errors(row))
+        elif row["track"] == "tender":
+            # Drafts may be incomplete or may name a future custom adapter,
+            # but populated URLs must still be safe to retain in config.
+            for label, value in (("url", row["url"]), ("rss", row["rss"])):
+                if value and not _is_public_url(value):
+                    errors.append(f"{prefix}: draft {label} must be a public http(s) URL when supplied")
+            for variant in (part.strip() for part in row["url_variants"].split("|") if part.strip()):
+                if not _is_public_url(variant):
+                    errors.append(f"{prefix}: invalid draft url_variants entry '{variant}'")
+        elif row["track"] == "development":
+            # Several discovery adapters intentionally store an ArcGIS item
+            # id or ODS dataset slug here.  Enforce the network guard only
+            # when a disabled draft contains a URL.
+            if row["url"] and "://" in row["url"] and not _is_public_url(row["url"]):
+                errors.append(f"{prefix}: draft development url must be public when supplied")
+    if errors:
+        raise SourceRegistryError(path, errors)
+
+
+def load_source_rows(path=None, *, root=None, active_only=False, track=None):
+    """Load and strictly validate the one canonical runtime source registry."""
+    resolved = resolve_registry_path(path, root)
+    if not resolved.exists():
+        raise SourceRegistryError(resolved, ["sources.csv is missing"])
+    try:
+        with resolved.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            headers = tuple(reader.fieldnames or ())
+            missing = [column for column in SOURCE_COLUMNS if column not in headers]
+            if missing:
+                raise SourceRegistryError(resolved, [f"missing column(s): {', '.join(missing)}"])
+            rows = [_normalized_source_row(row) for row in reader]
+    except SourceRegistryError:
+        raise
+    except Exception as exc:
+        raise SourceRegistryError(resolved, [f"could not read registry: {exc}"]) from exc
+    _validate_rows(rows, resolved)
+    if track is not None:
+        normalized_track = str(track).strip().casefold()
+        if normalized_track not in SOURCE_TRACKS:
+            raise SourceRegistryError(resolved, [f"unknown track '{track}'"])
+        rows = [row for row in rows if row["track"] == normalized_track]
+    if active_only:
+        rows = [row for row in rows if row["active"] == "Y"]
+    return rows
+
+
+def load_tender_sources(path=None, *, root=None, active_only=True):
+    sources = []
+    for row in load_source_rows(path, root=root, active_only=active_only, track="tender"):
+        source = dict(row)
+        source["url_variants"] = [part.strip() for part in row["url_variants"].split("|") if part.strip()]
+        source["no_retry"] = row["no_retry"] == "Y"
+        sources.append(source)
+    return sources
+
+
+def load_development_connectors(path=None, *, root=None, active_only=True):
+    return {
+        row["source_id"]: row
+        for row in load_source_rows(path, root=root, active_only=active_only, track="development")
+    }
+
+
+def registry_summary(path=None, *, root=None):
+    resolved = resolve_registry_path(path, root)
+    rows = load_source_rows(resolved)
+    return {
+        "path": str(resolved),
+        "total": len(rows),
+        "active": sum(row["active"] == "Y" for row in rows),
+        "tender": sum(row["track"] == "tender" for row in rows),
+        "development": sum(row["track"] == "development" for row in rows),
+    }
+
+
+def write_source_rows(rows, path=None, *, root=None):
+    """Validate and atomically replace a registry edited by the desktop GUI."""
+    resolved = resolve_registry_path(path, root)
+    normalized = [_normalized_source_row(row) for row in rows]
+    _validate_rows(normalized, resolved)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    temporary = resolved.with_suffix(resolved.suffix + ".tmp")
+    try:
+        with temporary.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=SOURCE_COLUMNS, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows({column: row.get(column, "") for column in SOURCE_COLUMNS} for row in normalized)
+        os.replace(temporary, resolved)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return resolved
+
+
+def upsert_source(source, path=None, *, root=None):
+    rows = load_source_rows(path, root=root)
+    incoming = _normalized_source_row(source)
+    replaced = False
+    for index, row in enumerate(rows):
+        if row["source_id"] == incoming["source_id"]:
+            rows[index] = incoming
+            replaced = True
+            break
+    if not replaced:
+        rows.append(incoming)
+    return write_source_rows(rows, path, root=root)
+
+
+def set_source_active(source_id, active, path=None, *, root=None):
+    rows = load_source_rows(path, root=root)
+    wanted = str(source_id).strip().casefold()
+    found = False
+    for row in rows:
+        if row["source_id"] == wanted:
+            row["active"] = "Y" if bool(active) else "N"
+            found = True
+            break
+    if not found:
+        raise SourceRegistryError(resolve_registry_path(path, root), [f"source_id '{source_id}' was not found"])
+    return write_source_rows(rows, path, root=root)
+
+# Compatibility-only map from historical Source_Register display names to
+# canonical source IDs. Runtime collection never reads this list.
 NAME_TO_CONNECTOR = {
     "township of langley development activity": "twp_langley_devactivity",
     "maple ridge active development application": "maple_ridge_devapps",
@@ -62,7 +319,11 @@ def _norm(s):
 
 def load_connectors(csv_path):
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        fieldnames = tuple(reader.fieldnames or ())
+        rows = list(reader)
+    if "track" in fieldnames:
+        rows = load_source_rows(csv_path, active_only=False, track="development")
     # tolerant key access: source_id or id
     out = {}
     for r in rows:
@@ -264,9 +525,9 @@ def write_sync_report_csv(rows, path):
 
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="TENDER_FINDER Source_Register <-> connector sync")
+    ap = argparse.ArgumentParser(description="Reconcile a historical Source_Register sheet with the canonical source registry")
     ap.add_argument("--from-master", required=True)
-    ap.add_argument("--config", default="tenderfinder_dev_app_endpoints.csv")
+    ap.add_argument("--config", default=str(resolve_registry_path()))
     ap.add_argument("--out", default="sync_report.csv")
     a = ap.parse_args()
     rows, summary = build_sync_report(a.from_master, a.config)

@@ -167,7 +167,7 @@ def test_classify_log_line_color_tags() -> None:
     assert g.classify_log_line("DONE in 121.09s") == "stage"
     assert g.classify_log_line("TENDER_FINDER_USER_ACTION_REQUIRED: clear the BC Bid page") == "action"
     assert g.classify_log_line("status=BC_BID_BLOCKED_BROWSER_CHECK_USER_ACTION_REQUIRED") == "action"
-    assert g.classify_log_line("ERROR: could not start demo build: boom") == "error"
+    assert g.classify_log_line("ERROR: could not start TENDER_FINDER run: boom") == "error"
     assert g.classify_log_line("USER_CANCELLED: the GUI window was closed") == "error"
     assert g.classify_log_line("future=7537 watch=973") == ""
 
@@ -223,6 +223,9 @@ def test_primary_buttons_visible_on_launch() -> None:
             app.run_full_button,
             app.run_fast_button,
             app.run_button,
+            app.self_test_button,
+            app.open_keywords_button,
+            app.validate_keywords_button,
             app.open_workbook_button,
             app.open_folder_button,
             app.open_report_button,
@@ -231,6 +234,9 @@ def test_primary_buttons_visible_on_launch() -> None:
         ]
         for button in buttons:
             assert button.winfo_exists()
+        assert app.run_full_button.cget("text") == "Live Run"
+        assert app.run_fast_button.cget("text") == "Offline/Test Run"
+        assert app.self_test_button.cget("text") == "Run Self-Test"
         assert app.root.winfo_width() >= 1050
         assert app.root.winfo_height() >= 700
         assert app.run_button.winfo_y() + app.run_button.winfo_height() < 768
@@ -252,9 +258,22 @@ def test_email_and_source_tabs_have_reachable_buttons() -> None:
         assert app.test_email_import_button.winfo_exists()
         assert app.run_email_demo_button.winfo_exists()
         app.notebook.select(app.source_tab)
-        app.root.update_idletasks()
+        app.root.update()
         assert app.bc_bid_check_button.winfo_exists()
         assert app.continue_button.winfo_ismapped() == 0
+        source_manager_buttons = [
+            app.add_source_button,
+            app.edit_source_button,
+            app.toggle_source_button,
+            app.validate_sources_button,
+            app.test_source_offline_button,
+            app.test_source_live_button,
+        ]
+        for button in source_manager_buttons:
+            assert button.winfo_exists()
+            assert button.winfo_ismapped() == 1
+        assert app.source_tree.winfo_exists()
+        assert len(app.source_tree.get_children()) == 39
     finally:
         try:
             app.root.destroy()

@@ -1,141 +1,89 @@
 TENDER_FINDER - SIMPLE START GUIDE
-=========================
+==================================
 
-This file is for a normal user.
-You can open it in Notepad.
-
-
-WHAT THIS FOLDER IS
--------------------
-
-This folder contains the TENDER_FINDER program.
-TENDER_FINDER helps build an Excel file with tenders and project leads.
+This file is for a normal Windows user. You can open it in Notepad.
 
 
-WHAT TO DO FIRST
-----------------
-
-1. Open this folder.
-2. Double-click:
-
-   setup_venv.bat
-
-3. Wait for setup to finish.
-   This may take a few minutes.
-
-
-HOW TO CHECK THAT IT IS READY
------------------------------
-
-Double-click:
-
-   verify_package.bat
-
-If the last line says:
-
-   VERIFY_PACKAGE: PASS
-
-then TENDER_FINDER is ready to use.
-
-
-HOW TO OPEN TENDER_FINDER
-----------------
+START THE PROGRAM
+-----------------
 
 Double-click:
 
    Launch_TENDER_FINDER_GUI.bat
 
-The TENDER_FINDER window will open.
+The first launch automatically prepares the private Python environment. This
+can take several minutes and needs internet access to install packages. Later
+launches open the GUI directly.
 
 
-WHAT TO CLICK IN THE TENDER_FINDER WINDOW
---------------------------------
+FIRST SAFE CHECK
+----------------
 
-If you have tender email alerts saved as .eml files:
+1. Click Validate keywords.
+2. Click Run Self-Test.
+3. Require Self-Test PASS with 0 failed checks.
 
-1. Click:
-   Create / Open Email Import Folder
-
-   This opens the folder where TENDER_FINDER reads email files.
-
-2. Copy your .eml files into that folder.
-
-3. Go back to the TENDER_FINDER window and click:
-   Test Email Import
-
-   This checks that TENDER_FINDER can read the email files.
-
-4. If that looks good, click:
-   Run Demo With Email Alerts
-
-   This is the main run with email alert input.
+Self-Test and Offline/Test Run do not contact public tender sites.
 
 
-IF YOU DO NOT HAVE .EML FILES
------------------------------
+RUN OPTIONS
+-----------
 
-You can still run TENDER_FINDER.
+Offline/Test Run
+- Uses packaged and local inputs only.
+- Best for a safe first run and weekly checks before going live.
 
-For a faster run, double-click:
-
-   run_tenderfinder_demo_fast.bat
-
-For a fuller run, double-click:
-
-   run_tenderfinder_demo.bat
-
-
-FAST VS FULL
-------------
-
-run_tenderfinder_demo_fast.bat
-- Faster
-- Good for a quick check
-
-run_tenderfinder_demo.bat
-- Slower
-- Runs a more complete sweep
+Live Run
+- Contacts the enabled public sources in config\sources.csv.
+- Does not log in, store portal passwords, or bypass CAPTCHA.
+- BC Bid may ask you to complete a visible browser check.
 
 
-WHERE TO FIND THE RESULT
-------------------------
+EDIT KEYWORDS
+-------------
 
-After a successful run, TENDER_FINDER usually creates output here:
+Open config\keywords.xlsx, edit the Keywords sheet, save, and click Validate
+keywords before running. Set active to N to disable a rule. Every run
+recalculates all records from the current file. Check Keyword_Change_Audit for
+old/new score, tier, and bucket changes. Manual Assigned To, Status, Notes,
+and Weekly Review Log entries are preserved.
 
-   C:\tenderfinder_out\demo_p522\
 
-Main result file:
+ADD OR CHANGE SOURCES
+---------------------
 
-   TENDER_FINDER_DEMO_Opportunities_Three_Buckets.xlsx
+Open the Source Checks tab. You can Add Source, Edit Source, Enable / Disable,
+Validate Registry, Test Selected Offline, or Test Selected Live. New sources
+start disabled. A live source test contacts only the selected public source
+after you confirm it.
 
-You may also want to open:
 
-   DEMO_BUILD_REPORT.md
-   demo_summary.txt
-   DEMO_TALKTRACK.md
+EMAIL ALERT FILES
+-----------------
+
+1. Open Email Alert Intake.
+2. Click Create / Open Email Import Folder.
+3. Copy approved .eml files into that folder.
+4. Click Test Email Import.
+5. If the counts look right, click Run With Email Alerts.
+
+TENDER_FINDER does not move or delete your source email files.
+
+
+RESULTS
+-------
+
+Use Open Workbook or Open Output Folder after a successful run. Outputs,
+manifests, logs, settings, and history are stored under:
+
+   C:\tenderfinder_out
+
+Normal runs do not write runtime data into the program folder.
 
 
 IF SOMETHING DOES NOT WORK
 --------------------------
 
-1. Run:
-   verify_package.bat
-
-2. Make sure you already ran:
-   setup_venv.bat
-
-3. If the TENDER_FINDER window does not open, try:
-   run_tenderfinder_demo_fast.bat
-
-
-QUICK ORDER
------------
-
-1. setup_venv.bat
-2. verify_package.bat
-3. Launch_TENDER_FINDER_GUI.bat
-4. Click Create / Open Email Import Folder
-5. Put .eml files into that folder
-6. Click Test Email Import
-7. Click Run Demo With Email Alerts
-
+Run Self-Test again. You can also double-click verify_package.bat; it uses the
+same offline Self-Test. A FAIL is honest: inspect the shown manifest/output
+folder before relying on the workbook.

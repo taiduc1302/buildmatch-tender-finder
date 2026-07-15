@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
-"""TENDER_FINDER Tender Intelligence - Desktop GUI Launcher (Patch 5.23)
+"""TENDER_FINDER Tender Intelligence standalone Windows desktop launcher.
 
-A Tkinter wrapper around tenderfinder_demo_three_buckets.py. This file does not
-reimplement any pipeline logic - it builds the same command line that
-run_tenderfinder_demo.bat / run_tenderfinder_demo_fast.bat already use, runs it as a
-subprocess, and streams its output into a scrolling log while the demo
-builds.
-
-Patch 5.23 refresh: a tabbed launcher layout sized for 1366x768 laptops,
-clearer email-import/source-check flows, auto-open workbook controls, and
-post-run result shortcuts without changing the underlying demo pipeline.
-
-Business logic (command construction, subprocess execution, summary
-parsing) is kept in plain functions with no Tkinter dependency so it can
-be exercised directly from a test script without a display. Only the
-TenderFinderLauncherApp class below touches Tkinter widgets.
+Tkinter owns only the presentation layer. Live/Offline runs, source tests,
+configuration preflight, manifests, and the shared offline Self-Test all use
+the display-agnostic :mod:`tenderfinder_engine` service boundary so the same
+engine can later be called from a website without importing GUI widgets.
 """
 from __future__ import annotations
 
@@ -67,6 +57,24 @@ from tenderfinder_keywords_config import (  # noqa: E402
     load_keywords_config,
     validation_summary,
 )
+from tenderfinder_engine import (  # noqa: E402
+    build_command_for_paths,
+    run_command as run_engine_command,
+    run_self_test as run_engine_self_test,
+    test_source_definition,
+    validate_runtime_configuration,
+)
+from tenderfinder_source_registry import (  # noqa: E402
+    DEVELOPMENT_ADAPTERS,
+    SOURCE_COLUMNS,
+    TENDER_ADAPTERS,
+    SourceRegistryError,
+    load_source_rows,
+    registry_summary,
+    resolve_registry_path,
+    set_source_active,
+    upsert_source,
+)
 
 ROOT_DIR = detect_package_root(SCRIPT_DIR)
 DEMO_SCRIPT = SCRIPT_DIR / "tenderfinder_demo_three_buckets.py"
@@ -85,9 +93,20 @@ else:
 # --out-dir target. Every prior patch's GUI-equivalent (.bat files) has
 # used a folder under C:\tenderfinder_out, so the GUI defaults there too.
 
-RUN_MODE_FULL = "Full Live Sweep (all sources + BC Bid + email intake, ~2-3 min)"
-RUN_MODE_FAST = "Fast Mode (skip live fetch, Track A only, ~1-2 min)"
-EXPECTED_SOURCE_STATUS_LINES = 22
+RUN_MODE_FULL = "Live Run (all enabled sources + BC Bid + email intake, ~2-3 min)"
+RUN_MODE_FAST = "Offline/Test Run (no live fetch, local inputs only, ~1-2 min)"
+
+
+def expected_source_status_lines(root: Path = ROOT_DIR) -> int:
+    """Active tender sources plus the internal email-intake status line."""
+    try:
+        rows = load_source_rows(root=root, active_only=True, track="tender")
+        return len(rows) + 1
+    except SourceRegistryError:
+        return 0
+
+
+EXPECTED_SOURCE_STATUS_LINES = expected_source_status_lines()
 
 # One GUI code path serves Windows and macOS; only fonts and the
 # open-a-file mechanism differ per platform.
@@ -119,12 +138,13 @@ def keywords_folder(root: Path = ROOT_DIR) -> Path:
 
 
 RESCORE_ALWAYS_SUMMARY = (
-    "Scores, tiers, gates, and labels always reflect current keywords.xlsx. "
-    "Editing rules changes ALL records' evaluation on next run, including previously collected ones."
+    "Scores, gates, labels, and bucket routing always reflect current keywords.xlsx. "
+    "Vancouver permit tiers are also recomputed when the persisted raw scoring snapshot is available."
 )
 RESCORE_ALWAYS_EXCEPTIONS = (
-    "Exceptions: legacy tenderfinder_agent2.py is static; replayed Vancouver permit tiers stay stored "
-    "when raw permit attributes are unavailable; tender rows that were never persisted cannot be rescored."
+    "Explicit legacy exception: old Vancouver rows without a raw scoring snapshot keep their stored tier "
+    "and are marked legacy_vancouver_scoring_text_unavailable. tenderfinder_agent2.py remains isolated/static; "
+    "rows that were never persisted cannot be replayed."
 )
 
 
@@ -225,7 +245,7 @@ def bc_bid_status_note(status: str) -> str:
 
 def default_output_dir(now: dt.datetime | None = None) -> Path:
     now = now or dt.datetime.now()
-    return DEFAULT_OUTPUT_ROOT / f"demo_gui_{now.strftime('%Y%m%d_%H%M%S')}"
+    return DEFAULT_OUTPUT_ROOT / f"weekly_run_{now.strftime('%Y%m%d_%H%M%S')}"
 
 
 def build_demo_command(
@@ -235,22 +255,15 @@ def build_demo_command(
     email_import_path: str = "",
     python_exe: str | None = None,
 ) -> list[str]:
-    """Build the exact command line the .bat launchers already use.
-    Pure function - no subprocess, no Tkinter - so it's directly testable."""
-    python_exe = python_exe or sys.executable
-    cmd = [
-        python_exe,
-        "-u",
-        str(DEMO_SCRIPT),
-        "--review-xlsx", str(review_xlsx),
-        "--out-dir", str(out_dir),
-        "--email-intake",
-    ]
-    if email_import_path.strip():
-        cmd.extend(["--email-import-path", email_import_path.strip()])
-    if fast_mode:
-        cmd.append("--no-fetch")
-    return cmd
+    """Prepare the display-agnostic engine command used by the GUI."""
+    return build_command_for_paths(
+        review_xlsx,
+        out_dir,
+        fast_mode=fast_mode,
+        email_import_path=email_import_path,
+        python_exe=python_exe or sys.executable,
+        root=ROOT_DIR,
+    )
 
 
 def terminate_process_tree(proc: "subprocess.Popen[str]", grace_seconds: float = 3.0) -> bool:
@@ -304,6 +317,21 @@ def run_demo_build_subprocess(
     the live Popen object immediately after launch so a caller (e.g.
     DemoBuildWorker) can hold a reference to cancel the run mid-flight.
     """
+    if "--review-xlsx" in cmd and "--out-dir" in cmd:
+        try:
+            result = run_engine_command(
+                cmd,
+                root=cwd,
+                on_line=log_queue.put,
+                started_callback=started_callback,
+            )
+            return result.return_code
+        except Exception as exc:
+            log_queue.put(f"ERROR: could not start engine run: {exc}")
+            return -1
+
+    # Small compatibility path for process-control unit tests that exercise
+    # cancellation with a generic Python sleep command rather than a run plan.
     try:
         proc = subprocess.Popen(
             cmd,
@@ -314,7 +342,7 @@ def run_demo_build_subprocess(
             bufsize=1,
         )
     except Exception as exc:
-        log_queue.put(f"ERROR: could not start demo build: {exc}")
+        log_queue.put(f"ERROR: could not start TENDER_FINDER run: {exc}")
         return -1
 
     if started_callback is not None:
@@ -620,6 +648,12 @@ class TenderFinderLauncherApp:
         self._last_out_dir: Path | None = None
         self._source_lines_seen: set[str] = set()
         self._email_dry_run_log_path = ""
+        self._expected_source_status_lines = expected_source_status_lines(ROOT_DIR)
+        self._self_test_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+        self._self_test_running = False
+        self._self_test_proc: subprocess.Popen[str] | None = None
+        self._source_test_queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
+        self._source_test_running = False
 
         self._build_widgets()
 
@@ -651,7 +685,7 @@ class TenderFinderLauncherApp:
         self.out_dir_var = tk.StringVar(value=str(default_output_dir()))
         self.auto_open_workbook_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="Ready. Choose a mode and run TENDER_FINDER.")
-        self.mode_summary_var = tk.StringVar(value="Current mode: Full Live Sweep")
+        self.mode_summary_var = tk.StringVar(value="Current mode: Live Run")
         self.run_metrics_var = tk.StringVar(value="Build complete metrics will appear here after a run.")
         self.result_var = tk.StringVar(value="No build has run yet this session.")
         self.email_intake_var = tk.StringVar(value=self._email_intake_status_text())
@@ -659,7 +693,7 @@ class TenderFinderLauncherApp:
         self.email_folder_full_var = tk.StringVar()
         self.email_summary_var = tk.StringVar(value="Run Test Email Import to see dry-run counts, duplicate handling, and rejected-file reasons.")
         self.source_status_var = tk.StringVar(value="No source checks have run yet this session.")
-        self.source_progress_var = tk.StringVar(value=f"Sources completed: 0 / {EXPECTED_SOURCE_STATUS_LINES}")
+        self.source_progress_var = tk.StringVar(value=f"Sources completed: 0 / {self._expected_source_status_lines}")
         self.bc_bid_summary_var = tk.StringVar(value="BC Bid status: not checked in this session.")
         self.output_folder_display_var = tk.StringVar()
         self.output_folder_full_var = tk.StringVar()
@@ -705,18 +739,20 @@ class TenderFinderLauncherApp:
         for col in range(8):
             actions.columnconfigure(col, weight=1 if col in {0, 1, 2, 3, 4, 5, 6} else 0)
 
-        self.run_full_button = ttk.Button(actions, text="Run Full Live Sweep", command=self._on_run_full_clicked)
+        self.run_full_button = ttk.Button(actions, text="Live Run", command=self._on_run_full_clicked)
         self.run_full_button.grid(row=0, column=0, sticky="ew", padx=(10, 6), pady=(10, 8))
-        self.run_fast_button = ttk.Button(actions, text="Run Fast Mode", command=self._on_run_fast_clicked)
+        self.run_fast_button = ttk.Button(actions, text="Offline/Test Run", command=self._on_run_fast_clicked)
         self.run_fast_button.grid(row=0, column=1, sticky="ew", padx=6, pady=(10, 8))
-        self.run_button = ttk.Button(actions, text="Run TENDER_FINDER Sweep", command=self._on_run_clicked)
+        self.run_button = ttk.Button(actions, text="Run Selected Mode", command=self._on_run_clicked)
         self.run_button.grid(row=0, column=2, sticky="ew", padx=6, pady=(10, 8))
+        self.self_test_button = ttk.Button(actions, text="Run Self-Test", command=self._on_self_test_clicked)
+        self.self_test_button.grid(row=0, column=3, sticky="ew", padx=6, pady=(10, 8))
         self.pause_button = ttk.Button(actions, text="Pause", command=self._on_pause_clicked, state="disabled")
-        self.pause_button.grid(row=0, column=3, sticky="ew", padx=6, pady=(10, 8))
+        self.pause_button.grid(row=0, column=4, sticky="ew", padx=6, pady=(10, 8))
         self.stop_button = ttk.Button(actions, text="Stop", command=self._on_stop_clicked, state="disabled")
-        self.stop_button.grid(row=0, column=4, sticky="ew", padx=6, pady=(10, 8))
+        self.stop_button.grid(row=0, column=5, sticky="ew", padx=6, pady=(10, 8))
         self.resume_button = ttk.Button(actions, text="Resume", command=self._on_resume_clicked, state="disabled")
-        self.resume_button.grid(row=0, column=5, sticky="ew", padx=6, pady=(10, 8))
+        self.resume_button.grid(row=0, column=6, sticky="ew", padx=6, pady=(10, 8))
         ttk.Checkbutton(actions, text="Open workbook automatically when build completes", variable=self.auto_open_workbook_var).grid(
             row=1, column=0, columnspan=4, sticky="w", padx=10, pady=(0, 8)
         )
@@ -794,7 +830,7 @@ class TenderFinderLauncherApp:
         self.open_email_import_button.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         self.test_email_import_button = ttk.Button(primary, text="Test Email Import", command=self._on_test_email_intake)
         self.test_email_import_button.grid(row=0, column=1, sticky="ew", padx=6)
-        self.run_email_demo_button = ttk.Button(primary, text="Run Demo With Email Alerts", command=self._on_run_demo_with_email_alerts)
+        self.run_email_demo_button = ttk.Button(primary, text="Run With Email Alerts", command=self._on_run_demo_with_email_alerts)
         self.run_email_demo_button.grid(row=0, column=2, sticky="ew", padx=(6, 0))
 
         secondary = ttk.LabelFrame(summary, text="More Email Tools")
@@ -841,6 +877,288 @@ class TenderFinderLauncherApp:
 
         ttk.Label(panel, textvariable=self.bc_bid_summary_var, wraplength=980, justify="left").grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 4))
         ttk.Label(panel, textvariable=self.source_status_var, wraplength=980, justify="left").grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
+
+        manager = ttk.LabelFrame(self.source_tab, text="Canonical Source Manager — config/sources.csv")
+        manager.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        self.source_tab.rowconfigure(1, weight=1)
+        manager.columnconfigure(0, weight=1)
+        manager.rowconfigure(0, weight=1)
+
+        columns = ("source_id", "name", "track", "active", "adapter", "last_probe_status")
+        self.source_tree = ttk.Treeview(manager, columns=columns, show="headings", height=12, selectmode="browse")
+        headings = {
+            "source_id": "Source ID",
+            "name": "Name",
+            "track": "Track",
+            "active": "Active",
+            "adapter": "Adapter",
+            "last_probe_status": "Last Test",
+        }
+        widths = {"source_id": 155, "name": 250, "track": 90, "active": 60, "adapter": 155, "last_probe_status": 145}
+        for column in columns:
+            self.source_tree.heading(column, text=headings[column])
+            self.source_tree.column(column, width=widths[column], minwidth=55, stretch=column in {"name", "last_probe_status"})
+        source_scroll = ttk.Scrollbar(manager, orient="vertical", command=self.source_tree.yview)
+        self.source_tree.configure(yscrollcommand=source_scroll.set)
+        self.source_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 6))
+        source_scroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 6))
+        self.source_tree.bind("<Double-1>", lambda _event: self._on_edit_source())
+
+        buttons = ttk.Frame(manager)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 6))
+        for column in range(6):
+            buttons.columnconfigure(column, weight=1)
+        self.add_source_button = ttk.Button(buttons, text="Add Source", command=self._on_add_source)
+        self.add_source_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.edit_source_button = ttk.Button(buttons, text="Edit Source", command=self._on_edit_source)
+        self.edit_source_button.grid(row=0, column=1, sticky="ew", padx=4)
+        self.toggle_source_button = ttk.Button(buttons, text="Enable / Disable", command=self._on_toggle_source)
+        self.toggle_source_button.grid(row=0, column=2, sticky="ew", padx=4)
+        self.validate_sources_button = ttk.Button(buttons, text="Validate Registry", command=self._on_validate_sources)
+        self.validate_sources_button.grid(row=0, column=3, sticky="ew", padx=4)
+        self.test_source_offline_button = ttk.Button(buttons, text="Test Selected Offline", command=lambda: self._on_test_selected_source(False))
+        self.test_source_offline_button.grid(row=0, column=4, sticky="ew", padx=4)
+        self.test_source_live_button = ttk.Button(buttons, text="Test Selected Live", command=lambda: self._on_test_selected_source(True))
+        self.test_source_live_button.grid(row=0, column=5, sticky="ew", padx=(4, 0))
+        self.source_manager_status_var = self.tk.StringVar(value="Loading canonical registry...")
+        ttk.Label(manager, textvariable=self.source_manager_status_var, wraplength=980, justify="left").grid(
+            row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10)
+        )
+        self._refresh_source_registry()
+
+    def _refresh_source_registry(self) -> None:
+        try:
+            rows = load_source_rows(root=ROOT_DIR)
+            summary = registry_summary(root=ROOT_DIR)
+        except SourceRegistryError as exc:
+            self.source_manager_status_var.set(f"REGISTRY INVALID: {exc}")
+            return
+        for item in self.source_tree.get_children():
+            self.source_tree.delete(item)
+        for row in rows:
+            self.source_tree.insert(
+                "",
+                "end",
+                iid=row["source_id"],
+                values=(
+                    row["source_id"], row["name"], row["track"], row["active"],
+                    row["adapter"], row["last_probe_status"] or "not tested",
+                ),
+            )
+        active_tenders = sum(row["active"] == "Y" and row["track"] == "tender" for row in rows)
+        self._expected_source_status_lines = active_tenders + 1
+        self.source_manager_status_var.set(
+            f"VALID — {summary['total']} sources ({summary['active']} active; "
+            f"{summary['tender']} tender; {summary['development']} development). "
+            f"Runtime registry: {summary['path']}"
+        )
+
+    def _selected_source_row(self, *, warn: bool = True) -> dict[str, str] | None:
+        selection = self.source_tree.selection()
+        if not selection:
+            if warn:
+                self.messagebox.showwarning("Source Manager", "Select one source first.")
+            return None
+        source_id = str(selection[0])
+        try:
+            return next(row for row in load_source_rows(root=ROOT_DIR) if row["source_id"] == source_id)
+        except (StopIteration, SourceRegistryError) as exc:
+            if warn:
+                self.messagebox.showerror("Source Manager", f"Could not load selected source:\n{exc}")
+            return None
+
+    def _open_source_editor(self, existing: dict[str, str] | None = None) -> None:
+        tk, ttk = self.tk, self.ttk
+        source = {column: "" for column in SOURCE_COLUMNS}
+        source.update(
+            {
+                "track": "tender",
+                "active": "N",
+                "adapter": "public_listing",
+                "no_retry": "N",
+                "status": "ready_for_probe",
+            }
+        )
+        if existing:
+            source.update(existing)
+
+        window = tk.Toplevel(self.root)
+        window.title("Edit Source" if existing else "Add Source")
+        window.geometry("780x610")
+        window.minsize(680, 560)
+        window.transient(self.root)
+        window.grab_set()
+        window.columnconfigure(1, weight=1)
+
+        fields = (
+            ("source_id", "Source ID"),
+            ("name", "Display name"),
+            ("track", "Track"),
+            ("active", "Active"),
+            ("adapter", "Adapter"),
+            ("municipality", "Municipality"),
+            ("url", "URL / dataset token"),
+            ("endpoint", "Endpoint / item ID"),
+            ("rss", "RSS URL (optional)"),
+            ("url_variants", "URL variants (| separated)"),
+            ("no_retry", "No retry"),
+            ("tier", "Tier"),
+            ("status", "Status"),
+            ("notes", "Notes"),
+        )
+        variables = {key: tk.StringVar(value=source.get(key, "")) for key, _label in fields}
+        widgets: dict[str, Any] = {}
+        for row_index, (key, label) in enumerate(fields):
+            ttk.Label(window, text=label).grid(row=row_index, column=0, sticky="w", padx=(12, 8), pady=5)
+            if key == "track":
+                widget = ttk.Combobox(window, textvariable=variables[key], values=("tender", "development"), state="readonly")
+            elif key in {"active", "no_retry"}:
+                widget = ttk.Combobox(window, textvariable=variables[key], values=("Y", "N"), state="readonly")
+            elif key == "adapter":
+                widget = ttk.Combobox(window, textvariable=variables[key], state="readonly")
+            else:
+                widget = ttk.Entry(window, textvariable=variables[key])
+                if key == "source_id" and existing:
+                    widget.configure(state="readonly")
+            widget.grid(row=row_index, column=1, sticky="ew", padx=(0, 12), pady=5)
+            widgets[key] = widget
+
+        adapter_widget = widgets["adapter"]
+
+        def refresh_adapters(*_args: Any) -> None:
+            choices = sorted(TENDER_ADAPTERS if variables["track"].get() == "tender" else DEVELOPMENT_ADAPTERS)
+            adapter_widget.configure(values=choices)
+            if variables["adapter"].get() not in choices:
+                variables["adapter"].set(choices[0])
+
+        variables["track"].trace_add("write", refresh_adapters)
+        refresh_adapters()
+
+        note = (
+            "New sources start disabled for safety. Save validates the entire registry atomically. "
+            "Use Test Selected Offline before enabling; Live Test is always a separate action."
+        )
+        ttk.Label(window, text=note, wraplength=740, justify="left").grid(
+            row=len(fields), column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 4)
+        )
+        actions = ttk.Frame(window)
+        actions.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="e", padx=12, pady=(6, 12))
+
+        def save() -> None:
+            updated = dict(source)
+            for key, variable in variables.items():
+                updated[key] = variable.get().strip()
+            if updated["track"] == "development" and not updated["endpoint"]:
+                updated["endpoint"] = updated["url"]
+            updated["fetch_type"] = updated["fetch_type"] or updated["adapter"]
+            try:
+                upsert_source(updated, root=ROOT_DIR)
+            except SourceRegistryError as exc:
+                self.messagebox.showerror("Source validation failed", str(exc), parent=window)
+                return
+            window.destroy()
+            self._refresh_source_registry()
+            self.source_manager_status_var.set(
+                f"Saved {updated['source_id']} atomically to {resolve_registry_path(root=ROOT_DIR)}"
+            )
+
+        ttk.Button(actions, text="Cancel", command=window.destroy).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(actions, text="Validate and Save", command=save).grid(row=0, column=1)
+        widgets["name" if existing else "source_id"].focus_set()
+
+    def _on_add_source(self) -> None:
+        self._open_source_editor(None)
+
+    def _on_edit_source(self) -> None:
+        row = self._selected_source_row()
+        if row:
+            self._open_source_editor(row)
+
+    def _on_toggle_source(self) -> None:
+        row = self._selected_source_row()
+        if not row:
+            return
+        try:
+            set_source_active(row["source_id"], row["active"] != "Y", root=ROOT_DIR)
+        except SourceRegistryError as exc:
+            self.messagebox.showerror("Source validation failed", str(exc))
+            return
+        self._refresh_source_registry()
+        new_state = "enabled" if row["active"] != "Y" else "disabled"
+        self.source_manager_status_var.set(f"{row['source_id']} is now {new_state}.")
+
+    def _on_validate_sources(self) -> None:
+        try:
+            summary = registry_summary(root=ROOT_DIR)
+        except SourceRegistryError as exc:
+            self.source_manager_status_var.set(f"REGISTRY INVALID: {exc}")
+            self.messagebox.showerror("Source registry invalid", str(exc))
+            return
+        self._refresh_source_registry()
+        self.messagebox.showinfo(
+            "Source registry is valid",
+            f"Total: {summary['total']}\nActive: {summary['active']}\n"
+            f"Tender: {summary['tender']}\nDevelopment: {summary['development']}\n\n{summary['path']}",
+        )
+
+    def _on_test_selected_source(self, allow_network: bool) -> None:
+        if self._source_test_running:
+            return
+        row = self._selected_source_row()
+        if not row:
+            return
+        if allow_network and not self.messagebox.askyesno(
+            "Run live source test?",
+            f"This will make live public-network requests for only:\n\n"
+            f"{row['source_id']} — {row['name']}\n\n"
+            "No login or credentials are used. Continue?",
+        ):
+            return
+        self._source_test_running = True
+        self.test_source_offline_button.configure(state="disabled")
+        self.test_source_live_button.configure(state="disabled")
+        mode = "LIVE" if allow_network else "OFFLINE"
+        self.source_manager_status_var.set(f"{mode} test running for {row['source_id']}...")
+
+        def work() -> None:
+            try:
+                result = test_source_definition(row["source_id"], root=ROOT_DIR, allow_network=allow_network)
+                self._source_test_queue.put(("result", result))
+            except Exception as exc:
+                self._source_test_queue.put(("error", str(exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(100, self._poll_source_test_queue)
+
+    def _poll_source_test_queue(self) -> None:
+        try:
+            kind, payload = self._source_test_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(100, self._poll_source_test_queue)
+            return
+        self._source_test_running = False
+        self.test_source_offline_button.configure(state="normal")
+        self.test_source_live_button.configure(state="normal")
+        if kind == "error":
+            self.source_manager_status_var.set(f"SOURCE TEST FAIL: {payload}")
+            self.messagebox.showerror("Source test failed", str(payload))
+            return
+        result = dict(payload)
+        verdict = "PASS" if result.get("passed") else "FAIL"
+        network = "live network used" if result.get("network_used") else "offline; no network"
+        self.source_manager_status_var.set(
+            f"{verdict}: {result.get('source_id')} -> {result.get('status')} ({network})"
+        )
+        self._refresh_source_registry()
+        details = json.dumps(result.get("details"), indent=2, ensure_ascii=False, default=str)
+        message = (
+            f"{verdict}: {result.get('source_id')}\nStatus: {result.get('status')}\n"
+            f"Mode: {network}\n\n{details[:1800]}"
+        )
+        if result.get("passed"):
+            self.messagebox.showinfo("Source test complete", message)
+        else:
+            self.messagebox.showerror("Source test failed", message)
 
     def _build_results_tab(self) -> None:
         tk, ttk = self.tk, self.ttk
@@ -1015,13 +1333,127 @@ class TenderFinderLauncherApp:
 
     def _on_run_full_clicked(self) -> None:
         self.run_mode_var.set(RUN_MODE_FULL)
-        self.mode_summary_var.set("Current mode: Full Live Sweep")
+        self.mode_summary_var.set("Current mode: Live Run")
         self._on_run_clicked()
 
     def _on_run_fast_clicked(self) -> None:
         self.run_mode_var.set(RUN_MODE_FAST)
-        self.mode_summary_var.set("Current mode: Fast Mode")
+        self.mode_summary_var.set("Current mode: Offline/Test Run")
         self._on_run_clicked()
+
+    def _on_self_test_clicked(self) -> None:
+        if self._self_test_running or (self.worker is not None and self.worker.is_running()):
+            return
+        try:
+            preflight = validate_runtime_configuration(root=ROOT_DIR)
+            if not preflight.get("passed"):
+                raise RuntimeError(f"Required offline review workbook is missing: {preflight.get('review_xlsx')}")
+        except Exception as exc:
+            self._set_status("Self-Test preflight failed.", urgent=True)
+            self.messagebox.showerror("Self-Test FAIL", str(exc))
+            return
+
+        while True:
+            try:
+                self._self_test_queue.get_nowait()
+            except queue.Empty:
+                break
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+        self._self_test_running = True
+        self._self_test_proc = None
+        self._set_run_state("self_test")
+        self.progress.start(12)
+        self._start_spinner()
+        self._set_status("Self-Test running offline in isolated state...")
+        self.run_metrics_var.set("Self-Test uses --no-fetch, a unique state root, and the same engine/workbook validation as a real run.")
+        self._append_log("SELF_TEST: starting offline end-to-end validation; no live source fetch is allowed.")
+
+        def work() -> None:
+            try:
+                result = run_engine_self_test(
+                    root=ROOT_DIR,
+                    on_line=lambda line: self._self_test_queue.put(("line", line)),
+                    started_callback=lambda proc: setattr(self, "_self_test_proc", proc),
+                )
+                self._self_test_queue.put(("result", result))
+            except Exception as exc:
+                self._self_test_queue.put(("error", str(exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(100, self._poll_self_test_queue)
+
+    def _poll_self_test_queue(self) -> None:
+        terminal: tuple[str, Any] | None = None
+        try:
+            while True:
+                kind, payload = self._self_test_queue.get_nowait()
+                if kind == "line":
+                    self._append_log(str(payload))
+                else:
+                    terminal = (kind, payload)
+                    break
+        except queue.Empty:
+            pass
+        if terminal is None:
+            self.root.after(100, self._poll_self_test_queue)
+            return
+
+        self._self_test_running = False
+        self._self_test_proc = None
+        self.progress.stop()
+        self._stop_spinner()
+        self._set_run_state("idle")
+        kind, payload = terminal
+        if kind == "error":
+            self._set_status("Self-Test FAIL — preflight or engine error.", urgent=True)
+            self.run_metrics_var.set(f"Self-Test FAIL: {payload}")
+            self.messagebox.showerror("Self-Test FAIL", str(payload))
+            return
+
+        result = payload
+        verdict = "PASS" if result.passed else "FAIL"
+        self_test_counts: dict[str, Any] = {}
+        try:
+            self_test_counts = json.loads(result.manifest_path.read_text(encoding="utf-8")).get("self_test", {})
+        except (OSError, ValueError):
+            pass
+        counts_text = (
+            f"passed {self_test_counts.get('passed', '?')} | "
+            f"failed {self_test_counts.get('failed', '?')} | "
+            f"skipped {self_test_counts.get('skipped', '?')} | "
+            f"intentionally excluded {self_test_counts.get('intentionally_excluded', '?')}"
+        )
+        self.last_results = read_run_results(result.out_dir)
+        self.last_results["out_dir"] = str(result.out_dir)
+        self.last_results["manifest_path"] = str(result.manifest_path)
+        self.open_folder_button.configure(state="normal")
+        if self.last_results.get("workbook_path"):
+            self.open_workbook_button.configure(state="normal")
+        self.result_paths_var.set(
+            f"Self-Test manifest: {result.manifest_path}\nOutput folder: {result.out_dir}\n"
+            f"Workbook: {self.last_results.get('workbook_path', '')}"
+        )
+        self.result_var.set(
+            f"Self-Test {verdict} | {counts_text} | exit code {result.return_code} | "
+            f"artifacts {len(result.artifacts)} | {result.manifest_path}"
+        )
+        self.run_metrics_var.set(
+            f"Self-Test {verdict}: {counts_text}. Exit code: {result.return_code}. "
+            "Manifest and isolated artifacts are available in the output folder."
+        )
+        self._set_status(f"Self-Test {verdict}." if result.passed else "Self-Test FAIL — inspect engine.log and manifest.", urgent=not result.passed)
+        if result.passed:
+            self.messagebox.showinfo(
+                "Self-Test PASS",
+                f"Offline self-test passed.\n{counts_text}\n\nManifest:\n{result.manifest_path}",
+            )
+        else:
+            self.messagebox.showerror(
+                "Self-Test FAIL",
+                f"{counts_text}\nExit code: {result.return_code}\n\nManifest:\n{result.manifest_path}",
+            )
 
     def _on_create_open_email_import_folder(self) -> None:
         paths = ensure_email_alert_dirs(ROOT_DIR)
@@ -1130,7 +1562,7 @@ class TenderFinderLauncherApp:
         self.messagebox.showinfo(
             "Check BC Bid Public Access",
             "\n".join([
-                "OK_PUBLIC_ACCESS: run a Full Live Sweep and TENDER_FINDER will report rows parsed when the public page loads normally.",
+                "OK_PUBLIC_ACCESS: run a Live Run and TENDER_FINDER will report rows parsed when the public page loads normally.",
                 "BROWSER_CHECK_NEEDS_USER: TENDER_FINDER may open a visible browser and wait for you to clear the public browser-check yourself.",
                 "BLOCKED: if BC Bid blocks the public session, TENDER_FINDER reports that honestly and does not ask for credentials.",
                 "PARSED_ROWS / PAGES_FETCHED / HARD_CAP_REACHED are reported in the workbook and summary after the run.",
@@ -1176,13 +1608,23 @@ class TenderFinderLauncherApp:
             self.run_button.configure(state="disabled")
             self.run_full_button.configure(state="disabled")
             self.run_fast_button.configure(state="disabled")
+            self.self_test_button.configure(state="disabled")
             self.pause_button.configure(state="normal")
             self.stop_button.configure(state="normal")
+            self.resume_button.configure(state="disabled")
+        elif state == "self_test":
+            self.run_button.configure(state="disabled")
+            self.run_full_button.configure(state="disabled")
+            self.run_fast_button.configure(state="disabled")
+            self.self_test_button.configure(state="disabled")
+            self.pause_button.configure(state="disabled")
+            self.stop_button.configure(state="disabled")
             self.resume_button.configure(state="disabled")
         elif state == "paused":
             self.run_button.configure(state="normal")
             self.run_full_button.configure(state="normal")
             self.run_fast_button.configure(state="normal")
+            self.self_test_button.configure(state="normal")
             self.pause_button.configure(state="disabled")
             self.stop_button.configure(state="disabled")
             self.resume_button.configure(state="normal")
@@ -1190,6 +1632,7 @@ class TenderFinderLauncherApp:
             self.run_button.configure(state="normal")
             self.run_full_button.configure(state="normal")
             self.run_fast_button.configure(state="normal")
+            self.self_test_button.configure(state="normal")
             self.pause_button.configure(state="disabled")
             self.stop_button.configure(state="disabled")
             self.resume_button.configure(state="disabled")
@@ -1303,7 +1746,7 @@ class TenderFinderLauncherApp:
             self.messagebox.showerror("Keywords validation failed", str(exc))
             return
         self.company_profile_var.set(keyword_result["summary"])
-        self.mode_summary_var.set("Current mode: Fast Mode" if fast_mode else "Current mode: Full Live Sweep")
+        self.mode_summary_var.set("Current mode: Offline/Test Run" if fast_mode else "Current mode: Live Run")
 
         review_xlsx, review_source = discover_review_xlsx(ROOT_DIR)
         if review_xlsx is None:
@@ -1333,7 +1776,8 @@ class TenderFinderLauncherApp:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
         self._source_lines_seen.clear()
-        self.source_progress_var.set(f"Sources completed: 0 / {EXPECTED_SOURCE_STATUS_LINES}")
+        self._expected_source_status_lines = expected_source_status_lines(ROOT_DIR)
+        self.source_progress_var.set(f"Sources completed: 0 / {self._expected_source_status_lines}")
         self.source_status_var.set("No source statuses yet for this run.")
         self.bc_bid_summary_var.set("BC Bid status: waiting for this run.")
         self.run_metrics_var.set("Build in progress. TENDER_FINDER will keep the current step, source progress, and post-run actions updated here.")
@@ -1347,10 +1791,10 @@ class TenderFinderLauncherApp:
         self._append_log(f"Review workbook: {review_xlsx} (via {review_source})")
         self._append_log(f"Running: {' '.join(cmd)}")
         if fast_mode:
-            self._append_log("Mode explanation: Fast Mode skips live tender sites and rebuilds from the local proven workbook.")
+            self._append_log("Mode explanation: Offline/Test Run skips every live tender site and rebuilds from local inputs.")
         else:
             self._append_log(
-                "Mode explanation: Full Live Sweep reads local proven leads, then checks public "
+                "Mode explanation: Live Run reads local proven leads, then checks public "
                 "tender pages and BC Bid public browse. BC Bid may open its own browser window if "
                 "it needs a person to clear a browser-check/CAPTCHA page - TENDER_FINDER never logs in or "
                 "solves a CAPTCHA on your behalf."
@@ -1394,7 +1838,9 @@ class TenderFinderLauncherApp:
         source_id = parsed["source_id"]
         status = parsed["status"]
         self._source_lines_seen.add(source_id)
-        self.source_progress_var.set(f"Sources completed: {len(self._source_lines_seen)} / {EXPECTED_SOURCE_STATUS_LINES}")
+        self.source_progress_var.set(
+            f"Sources completed: {len(self._source_lines_seen)} / {self._expected_source_status_lines}"
+        )
         self.source_status_var.set(f"Last source status: {source_id} -> {status}")
         if source_id == "bc_bid_public":
             pages = ""
@@ -1463,6 +1909,14 @@ class TenderFinderLauncherApp:
                 return
             self._append_log("User closed the window while a build was running - stopping it now...")
             self.worker.cancel()
+        elif self._self_test_running:
+            if not self.messagebox.askyesno(
+                "Self-Test in progress",
+                "The offline Self-Test is still running. Closing now will stop it. Close anyway?",
+            ):
+                return
+            if self._self_test_proc is not None:
+                terminate_process_tree(self._self_test_proc)
         self.root.destroy()
 
     def _on_build_paused(self) -> None:
@@ -1531,7 +1985,7 @@ class TenderFinderLauncherApp:
             self.run_metrics_var.set(f"Build failed. Exit code: {self.worker.return_code}.")
             self.messagebox.showerror(
                 "TENDER_FINDER build failed",
-                f"The demo build exited with an error (code {self.worker.return_code}).\n\n"
+                f"The TENDER_FINDER run exited with an error (code {self.worker.return_code}).\n\n"
                 f"Full output was written to:\n{error_log}",
             )
             return

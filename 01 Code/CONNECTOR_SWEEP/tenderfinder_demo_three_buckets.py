@@ -59,6 +59,8 @@ from tenderfinder_source_backlog import (
     append_source_roadmap_printable_sheet,
     cross_check_counts as backlog_cross_check_counts,
 )
+from tenderfinder_source_registry import SourceRegistryError, load_tender_sources
+from tenderfinder_runtime import RuntimeStateError, runtime_paths
 from tenderfinder_keywords_config import (
     KeywordConfigError,
     load_keywords_config,
@@ -70,10 +72,12 @@ import tenderfinder_guards as G
 ROOT = Path(__file__).resolve().parents[2]
 TODAY = dt.date.today()
 PATCH_VERSION = "5.23"
-DEMO_HISTORY_DIR = ROOT / "demo_history"
-BCBID_NETWORK_AUDIT_PATH = ROOT / "docs" / "BC_BID_NETWORK_AUDIT.md"
-PATCH_5_18_BACKLOG_PATH = ROOT / "PATCH_5_18_BACKLOG.md"
-AUTONOMOUS_FIXES_PATH = ROOT / "AUTONOMOUS_FIXES.md"
+_RUNTIME_PATHS = runtime_paths(create=False, package_root=ROOT)
+DEMO_HISTORY_DIR = _RUNTIME_PATHS.history
+LATEST_USER_MASTER_PATH = _RUNTIME_PATHS.latest_user_master
+BCBID_NETWORK_AUDIT_PATH = _RUNTIME_PATHS.root / "BC_BID_NETWORK_AUDIT.md"
+PATCH_5_18_BACKLOG_PATH = _RUNTIME_PATHS.root / "PATCH_5_18_BACKLOG.md"
+AUTONOMOUS_FIXES_PATH = _RUNTIME_PATHS.root / "AUTONOMOUS_FIXES.md"
 BCBID_BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
 LAST_BC_BID_AUDIT: dict[str, Any] = {}
 LAST_BC_BID_OFFICIAL_FINDINGS: dict[str, Any] = {}
@@ -104,8 +108,9 @@ BASELINE = {
 }
 RESCORE_ALWAYS_FUTURE_MIN_FIT = 50
 RESCORE_ALWAYS_SUMMARY = (
-    "Scores, tiers, gates, and labels always reflect current keywords.xlsx. "
-    "Editing rules changes ALL records' evaluation on next run, including previously collected ones."
+    "Scores, gates, labels, and bucket routing always reflect current keywords.xlsx. "
+    "Vancouver permit tiers are also recomputed when the persisted raw scoring snapshot is available; "
+    "legacy rows without that snapshot keep their stored tier and are explicitly audited."
 )
 P511_CORRECTED_FUTURE_COUNT = 7537
 
@@ -118,6 +123,18 @@ P511_CORRECTED_FUTURE_COUNT = 7537
 # same folder - it does not skip completed stages. Pause's guarantee is
 # output SAFETY (no half-written files), not saved work.
 PAUSE_EXIT_CODE = 86
+
+
+def configure_runtime_state(state_root: str | Path | None, mode: str) -> None:
+    """Route every mutable runtime artifact outside the package checkout."""
+    global _RUNTIME_PATHS, DEMO_HISTORY_DIR, LATEST_USER_MASTER_PATH
+    global BCBID_NETWORK_AUDIT_PATH, PATCH_5_18_BACKLOG_PATH, AUTONOMOUS_FIXES_PATH
+    _RUNTIME_PATHS = runtime_paths(state_root, mode=mode, package_root=ROOT, create=True)
+    DEMO_HISTORY_DIR = _RUNTIME_PATHS.history
+    LATEST_USER_MASTER_PATH = _RUNTIME_PATHS.latest_user_master
+    BCBID_NETWORK_AUDIT_PATH = _RUNTIME_PATHS.root / "BC_BID_NETWORK_AUDIT.md"
+    PATCH_5_18_BACKLOG_PATH = _RUNTIME_PATHS.root / "PATCH_5_18_BACKLOG.md"
+    AUTONOMOUS_FIXES_PATH = _RUNTIME_PATHS.root / "AUTONOMOUS_FIXES.md"
 SAFE_STAGES = [
     "track_a_loaded",
     "municipal_sources_done",
@@ -209,204 +226,20 @@ NEGATIVE_LINK_TERMS = (
     "view bid results",
 )
 
-SOURCE_VARIANT_NOTE = {
-    "tol_public_tenders": "Original 5.4 URL 404. Public page resolves but routes current opportunities to bidsandtenders; login platform skipped.",
-    "maple_ridge_rfps": "Original 5.4 URL 404. Repaired to City bid-opportunities page.",
-    "surrey_bids_public": "Original 5.4 URL 404. Repaired to City public tenders/RFQs/RFPs page.",
-}
+def _load_runtime_tender_sources() -> list[dict[str, Any]]:
+    """Read active tender sources from the one founder-editable registry."""
+    return load_tender_sources(root=ROOT, active_only=True)
 
-BCBID_PUBLIC_URL = "https://bcbid.gov.bc.ca/page.aspx/en/rfp/request_browse_public"
+
+TENDER_SOURCES = _load_runtime_tender_sources()
+BCBID_PUBLIC_URL = next(
+    (source["url"] for source in TENDER_SOURCES if source["source_id"] == "bc_bid_public"),
+    "",
+)
 BCBID_REGISTER_URL = "https://bcbid.gov.bc.ca/page.aspx/en/usr/login"
 BCBID_NEXT_PAGE_SELECTOR = "#body_x_grid_gridPagerBtnNextPage"
 BCBID_MAX_PAGES = 15  # hard upper bound; the real stop condition is the closing-date relevance window below
 BCBID_RELEVANCE_WINDOW_DAYS = 90
-
-TENDER_SOURCES = [
-    {
-        "source_id": "bc_bid_public",
-        "name": "BC Bid public open opportunities",
-        "url": BCBID_PUBLIC_URL,
-        "municipality": "BC-wide",
-        "note": "BC Bid public browse/download requires no login; submit requires registration. Automation may receive browser-check/reCAPTCHA.",
-        "no_retry": True,
-    },
-    {
-        "source_id": "fvrd_tenders",
-        "name": "Fraser Valley Regional District - Tenders/RFPs",
-        "url": "https://www.fvrd.ca/EN/main/government/tenders-rfps.html",
-        "rss": "https://www.fvrd.ca/EN/main/government/tenders-rfps.html?feed=rss",
-        "municipality": "Fraser Valley Regional District",
-    },
-    {
-        "source_id": "slrd_contracting",
-        "name": "Squamish-Lillooet Regional District - Contracting Opportunities",
-        "url": "https://www.slrd.bc.ca/inside-slrd/contracting-opportunities",
-        "municipality": "Squamish-Lillooet Regional District",
-    },
-    {
-        "source_id": "metro_van_procurement",
-        "name": "Metro Vancouver - Bidding Opportunities",
-        "url": "https://metrovancouver.org/bidding-opportunities",
-        "url_variants": [
-            "https://metrovancouver.org/bidding-opportunities",
-            "https://metrovancouver.org/services/about-us/doing-business-with-us",
-        ],
-        "municipality": "Metro Vancouver",
-    },
-    {
-        "source_id": "kpu_procurement",
-        "name": "KPU Procurement",
-        "url": "https://www.kpu.ca/procurement/Vendor-Help",
-        "municipality": "Surrey",
-    },
-    {
-        "source_id": "sd35_purchasing",
-        "name": "Langley School District 35 Purchasing",
-        "url": "https://www.sd35.bc.ca/purchasing-logistics",
-        "municipality": "Langley",
-    },
-    {
-        "source_id": "bidcentral_landing",
-        "name": "BidCentral landing page",
-        "url": "https://www.bidcentral.ca/",
-        "municipality": "BC",
-        "note": "Landing page only; membership likely required.",
-    },
-    {
-        "source_id": "tol_public_tenders",
-        "name": "Township of Langley public tenders/RFPs",
-        "url": "https://www.tol.ca/en/services/business-with-the-township.aspx",
-        "url_variants": [
-            "https://www.tol.ca/en/about-tol/tenders-rfps.aspx",
-            "https://www.tol.ca/en/services/business-with-the-township.aspx",
-            "https://www.tol.ca/en/services/procurement-forms-and-links.aspx",
-        ],
-        "municipality": "Township of Langley",
-        "note": SOURCE_VARIANT_NOTE["tol_public_tenders"],
-    },
-    {
-        "source_id": "maple_ridge_rfps",
-        "name": "Maple Ridge Bid Opportunities",
-        "url": "https://www.mapleridge.ca/build-do-business/bid-opportunities",
-        "url_variants": [
-            "https://www.mapleridge.ca/2090/Requests-for-Proposals",
-            "https://www.mapleridge.ca/build-do-business/bid-opportunities",
-        ],
-        "municipality": "Maple Ridge",
-        "note": SOURCE_VARIANT_NOTE["maple_ridge_rfps"],
-    },
-    {
-        "source_id": "new_west_procurement",
-        "name": "New Westminster Purchasing and Procurement",
-        "url": "https://www.newwestcity.ca/services/purchasing-and-procurement",
-        "municipality": "New Westminster",
-    },
-    {
-        "source_id": "surrey_bids_public",
-        "name": "Surrey public tenders/RFQs/RFPs page",
-        "url": "https://www.surrey.ca/business-economy/tenders-rfqs-rfps",
-        "url_variants": [
-            "https://www.surrey.ca/doing-business/bids-rfqs-rfps",
-            "https://www.surrey.ca/business-economy/tenders-rfqs-rfps",
-        ],
-        "municipality": "Surrey",
-        "note": SOURCE_VARIANT_NOTE["surrey_bids_public"],
-    },
-    {
-        "source_id": "coquitlam_bids",
-        "name": "Coquitlam Bid Opportunities",
-        "url": "https://www.coquitlam.ca/140/Bid-Opportunities",
-        "url_variants": [
-            "https://www.coquitlam.ca/140/Bid-Opportunities",
-            "https://www.coquitlam.ca/Bids.aspx",
-        ],
-        "municipality": "Coquitlam",
-    },
-    {
-        "source_id": "delta_bids",
-        "name": "Delta Bidding Opportunities public page",
-        "url": "https://www.delta.ca/city-hall/doing-business/bidding-opportunities",
-        "url_variants": [
-            "https://www.delta.ca/city-hall/doing-business/bidding-opportunities",
-            "https://www.delta.ca/business-development/doing-business-delta/bids-tenders",
-        ],
-        "municipality": "Delta",
-    },
-    {
-        "source_id": "port_coquitlam_bids",
-        "name": "Port Coquitlam Procurement public page",
-        "url": "https://www.portcoquitlam.ca/business-development/procurement",
-        "url_variants": [
-            "https://www.portcoquitlam.ca/business-development/procurement",
-            "https://www.portcoquitlam.ca/city-services/finance-purchasing/bids-tenders/",
-        ],
-        "municipality": "Port Coquitlam",
-    },
-    {
-        "source_id": "city_north_van_bids",
-        "name": "City of North Vancouver Bid Opportunities",
-        "url": "https://www.cnv.org/business-development/bid-notices",
-        "url_variants": [
-            "https://www.cnv.org/business-development/bid-notices",
-            "https://www.cnv.org/business-development/bid-opportunities",
-        ],
-        "municipality": "City of North Vancouver",
-    },
-    {
-        "source_id": "district_north_van_bids",
-        "name": "District of North Vancouver Bid Opportunities",
-        "url": "https://www.dnv.org/business-development/bid-opportunities",
-        "municipality": "District of North Vancouver",
-    },
-    {
-        "source_id": "richmond_procurement",
-        "name": "Richmond Purchasing public page",
-        "url": "https://www.richmond.ca/business-development/tenders.htm",
-        "url_variants": [
-            "https://www.richmond.ca/business-development/tenders.htm",
-            "https://www.richmond.ca/business/tenders.htm",
-        ],
-        "municipality": "Richmond",
-    },
-    {
-        "source_id": "pitt_meadows_bids",
-        "name": "Pitt Meadows Bids and Tenders public page",
-        "url": "https://www.pittmeadows.ca/business-services/doing-business-city/bids-and-rfps",
-        "url_variants": [
-            "https://www.pittmeadows.ca/business-services/doing-business-city/bids-and-rfps",
-            "https://www.pittmeadows.ca/city-hall/bids-and-tenders",
-        ],
-        "municipality": "Pitt Meadows",
-    },
-    {
-        "source_id": "civicinfo_bids",
-        "name": "CivicInfo BC Bids",
-        "url": "https://www.civicinfo.bc.ca/bids",
-        "municipality": "BC",
-        "note": "Polite single public request; record forbidden as likely valid if bot-blocked.",
-        "no_retry": True,
-    },
-    {
-        "source_id": "burnaby_bids",
-        "name": "Burnaby Bid Opportunities",
-        "url": "https://www.burnaby.ca/business/doing-business-with-the-city/bid-opportunities",
-        "url_variants": [
-            "https://www.burnaby.ca/business/doing-business-with-the-city/bid-opportunities",
-            "https://www.burnaby.ca/our-city/doing-business/bid-opportunities",
-        ],
-        "municipality": "Burnaby",
-    },
-    {
-        "source_id": "abbotsford_bids",
-        "name": "Abbotsford Procurement Services",
-        "url": "https://www.abbotsford.ca/city-hall/procurement-services",
-        "url_variants": [
-            "https://www.abbotsford.ca/city-hall/procurement-services",
-            "https://www.abbotsford.ca/business-development/business-licences-permits/bid-opportunities",
-        ],
-        "municipality": "Abbotsford",
-    },
-]
 
 PLANNING_CONTACTS = {
     "Coquitlam": "Planning: https://www.coquitlam.ca/development | 604-927-3441",
@@ -1309,14 +1142,54 @@ def _coerce_write_eligible(value: Any) -> bool:
     return clean_text(value).casefold() in {"1", "true", "yes", "y"}
 
 
-def _rescore_route(raw: dict[str, Any], source_id: str, fit_score: int) -> tuple[str, bool, str, int | None, str]:
+def _stored_vancouver_tier(raw: dict[str, Any]) -> str:
+    explicit = clean_text(raw.get("van_permit_fit_tier")).casefold()
+    if explicit:
+        return explicit
+    fit_reason = clean_text(raw.get("fit_reason")).casefold()
+    if fit_reason.startswith("van_permit:"):
+        return fit_reason.split(":", 1)[1]
+    return {
+        "Future_Projects": "strong",
+        "Run_Queue": "watchlist",
+        "Bulk_Intake_Raw": "bulk",
+        "Rejected_Archive": "noisy",
+    }.get(clean_text(raw.get("proposed_route")), "")
+
+
+def _vancouver_route_for_tier(tier: str) -> tuple[str, bool, str]:
+    return {
+        "strong": ("Future_Projects", True, ""),
+        "watchlist": ("Run_Queue", False, "van_permit_watchlist"),
+        "bulk": ("Bulk_Intake_Raw", False, "van_permit_bulk_intake"),
+        "noisy": ("Rejected_Archive", False, "van_permit_noisy_interior_ti"),
+    }[tier]
+
+
+def _rescore_route(
+    raw: dict[str, Any], source_id: str, fit_score: int,
+) -> tuple[str, bool, str, int | None, str, str, str]:
     stored_route = clean_text(raw.get("proposed_route"))
     stored_hold = clean_text(raw.get("hold_reason"))
     if source_id == "van_building_permits":
-        # Historical review rows do not retain the raw permit attributes needed
-        # by _van_permit_fit_tier. Keep that non-score tier only; score and labels
-        # still refresh from the normalized fields that are available.
-        return stored_route, _coerce_write_eligible(raw.get("write_eligible")), stored_hold, None, "van_raw_attributes_not_persisted"
+        old_tier = _stored_vancouver_tier(raw)
+        scoring_text = str(raw.get("keyword_scoring_text") or "").strip()
+        if scoring_text:
+            new_tier = G.van_permit_fit_tier(scoring_text)
+            route, eligible, hold = _vancouver_route_for_tier(new_tier)
+            return route, eligible, hold, None, "", old_tier, new_tier
+        # Legacy rows collected before the scoring-text seam cannot recreate
+        # the old raw-attribute tier. Their score and labels still refresh,
+        # and the explicit exception remains visible in the audit.
+        return (
+            stored_route,
+            _coerce_write_eligible(raw.get("write_eligible")),
+            stored_hold,
+            None,
+            "legacy_vancouver_scoring_text_unavailable",
+            old_tier,
+            old_tier,
+        )
 
     threshold: int | None = None
     score_gated_future = stored_route == "Future_Projects"
@@ -1332,9 +1205,9 @@ def _rescore_route(raw: dict[str, Any], source_id: str, fit_score: int) -> tuple
     if score_gated_future:
         threshold = threshold or RESCORE_ALWAYS_FUTURE_MIN_FIT
         if fit_score < threshold:
-            return "Run_Queue", False, f"rescore_fit_below_{threshold}", threshold, ""
-        return "Future_Projects", True, "", threshold, ""
-    return stored_route, _coerce_write_eligible(raw.get("write_eligible")), stored_hold, threshold, ""
+            return "Run_Queue", False, f"rescore_fit_below_{threshold}", threshold, "", "", ""
+        return "Future_Projects", True, "", threshold, "", "", ""
+    return stored_route, _coerce_write_eligible(raw.get("write_eligible")), stored_hold, threshold, "", "", ""
 
 
 def _rule_attribution(rule: Any) -> dict[str, Any]:
@@ -1377,9 +1250,9 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
         raw.get("municipality") or "",
         match_fields=scoring_fields,
     )
-    stored_score = coerce_int(raw.get("fit_score"))
+    stored_score = None if raw.get("fit_score") in (None, "") else coerce_int(raw.get("fit_score"))
     current_score = score_breakdown["fit_score"]
-    route, write_eligible, hold_reason, threshold, rescore_exception = _rescore_route(
+    route, write_eligible, hold_reason, threshold, rescore_exception, old_tier, new_tier = _rescore_route(
         raw, source_id, current_score
     )
     row = {
@@ -1419,8 +1292,13 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
         "source_id": source_id,
         "old_score": stored_score,
         "new_score": current_score,
+        "score_delta": current_score - stored_score if stored_score is not None else None,
+        "old_tier": old_tier,
+        "new_tier": new_tier,
         "old_route": clean_text(raw.get("proposed_route")),
         "new_route": route,
+        "old_bucket": clean_text(raw.get("proposed_route")),
+        "new_bucket": route,
         "threshold": threshold,
         "below_gate": route == "Run_Queue" and hold_reason.startswith("rescore_fit_below_"),
         "exception": rescore_exception,
@@ -1432,6 +1310,13 @@ def normalized_row(raw: dict[str, Any], enrichment: dict[str, Any] | None = None
         "geography_matches": [_rule_attribution(rule) for rule in score_breakdown["geography_matches"]],
         "client_matches": [_rule_attribution(rule) for rule in score_breakdown["client_matches"]],
     }
+    row["_keyword_rescore"]["changed"] = any(
+        (
+            stored_score is not None and stored_score != current_score,
+            row["_keyword_rescore"]["old_route"] != route,
+            bool(old_tier or new_tier) and old_tier != new_tier,
+        )
+    )
     return row
 
 
@@ -1558,7 +1443,8 @@ def sheet_dicts(wb: openpyxl.Workbook, sheet_name: str, required: set[str]) -> l
     return rows
 
 
-def most_recent_history(history_dir: Path = DEMO_HISTORY_DIR) -> Path | None:
+def most_recent_history(history_dir: Path | None = None) -> Path | None:
+    history_dir = history_dir or DEMO_HISTORY_DIR
     if not history_dir.exists():
         return None
     candidates = sorted(history_dir.glob("demo_p*_*.xlsx"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -1575,7 +1461,8 @@ def workbook_bid_later_count(path: Path) -> int:
         return 0
 
 
-def archive_pre_511_history(history_dir: Path = DEMO_HISTORY_DIR) -> list[Path]:
+def archive_pre_511_history(history_dir: Path | None = None) -> list[Path]:
+    history_dir = history_dir or DEMO_HISTORY_DIR
     if not history_dir.exists():
         return []
     archive_dir = history_dir / "archive_pre_5_11"
@@ -1593,7 +1480,8 @@ def archive_pre_511_history(history_dir: Path = DEMO_HISTORY_DIR) -> list[Path]:
     return moved
 
 
-def apply_run_history(data: DemoData, history_dir: Path = DEMO_HISTORY_DIR) -> None:
+def apply_run_history(data: DemoData, history_dir: Path | None = None) -> None:
+    history_dir = history_dir or DEMO_HISTORY_DIR
     prior = most_recent_history(history_dir)
     if not prior:
         for row in data.future:
@@ -1649,7 +1537,8 @@ def apply_run_history(data: DemoData, history_dir: Path = DEMO_HISTORY_DIR) -> N
         row["is_new_since_last_run"] = "NO" if lead_id in data.prior_lead_ids else "YES"
 
 
-def archive_demo_history(workbook_path: Path, out_dir: Path, history_dir: Path = DEMO_HISTORY_DIR) -> Path:
+def archive_demo_history(workbook_path: Path, out_dir: Path, history_dir: Path | None = None) -> Path:
+    history_dir = history_dir or DEMO_HISTORY_DIR
     history_dir.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     patch_name = "demo_p510" if "510" in out_dir.name.lower() else out_dir.name
@@ -3650,6 +3539,36 @@ def tender_rows_for_sheet(tenders: list[TenderCandidate]) -> list[list[Any]]:
     ] for t in tenders]
 
 
+KEYWORD_AUDIT_HEADERS = [
+    "lead_id", "source_id", "app_no", "old_score", "new_score", "score_delta",
+    "old_tier", "new_tier", "old_bucket", "new_bucket", "changed",
+    "threshold", "exception", "positive_matches", "negative_matches",
+    "geography_matches", "client_matches",
+]
+
+
+def _audit_match_text(event: dict[str, Any], key: str) -> str:
+    return "; ".join(
+        f"{item.get('keyword')} ({item.get('weight'):+})"
+        for item in event.get(key, [])
+    )
+
+
+def keyword_audit_rows(data: DemoData) -> list[list[Any]]:
+    rows = []
+    for event in data.keyword_rescore_events:
+        values = {
+            **event,
+            "changed": "YES" if event.get("changed") else "NO",
+            "positive_matches": _audit_match_text(event, "positive_matches"),
+            "negative_matches": _audit_match_text(event, "negative_matches"),
+            "geography_matches": _audit_match_text(event, "geography_matches"),
+            "client_matches": _audit_match_text(event, "client_matches"),
+        }
+        rows.append([values.get(header, "") for header in KEYWORD_AUDIT_HEADERS])
+    return rows
+
+
 def top_printable_rows(data: DemoData) -> list[dict[str, Any]]:
     signal_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     eligible = [
@@ -4126,6 +4045,19 @@ def build_workbook(out_path: Path, data: DemoData, tenders: list[TenderCandidate
         fit_col = fp_headers.index("fit_score") + 1
         ws.conditional_formatting.add(f"{get_column_letter(fit_col)}3:{get_column_letter(fit_col)}{ws.max_row}", CellIsRule(operator="greaterThanOrEqual", formula=["60"], fill=PatternFill("solid", fgColor="C6EFCE")))
 
+    ws = wb.create_sheet("Keyword_Change_Audit")
+    write_rows(
+        ws,
+        KEYWORD_AUDIT_HEADERS,
+        keyword_audit_rows(data),
+        "RESCORE_ALWAYS audit. Compare old/new score, Vancouver tier, and routing bucket. Legacy Vancouver rows without a persisted scoring snapshot are named in exception.",
+        {
+            "lead_id": 22, "source_id": 24, "old_bucket": 22, "new_bucket": 22,
+            "exception": 38, "positive_matches": 55, "negative_matches": 55,
+            "geography_matches": 40, "client_matches": 40,
+        },
+    )
+
     ws = wb.create_sheet("New_This_Run")
     new_headers = fp_headers
     new_rows = [[r.get(h) for h in new_headers] for r in data.future if r.get("is_new_since_last_run") == "YES"]
@@ -4483,10 +4415,10 @@ def write_autonomous_fixes(path: Path) -> None:
 
 ## Patch 5.22
 
-- Added package-local Email Alert Import UX for non-technical users: TENDER_FINDER now detects the portable package root, auto-creates `user_data/email_alerts/{inbox,processed,rejected,logs}`, stores local config in `user_data/tenderfinder_user_config.json`, and keeps duplicate state in `user_data/email_alerts/import_state.json`.
+- Added Email Alert Import UX for non-technical users. Current releases keep inbox, logs, selected-folder config, and duplicate state under the external runtime settings root (normally `C:\\tenderfinder_out\\state\\user\\settings`) instead of the program folder.
 - Expanded the manual `.eml` parser for real alert formats: multipart, text/plain, text/html, base64, quoted-printable, utf-8, iso-8859-1, HTML table text, anchor links, and SendGrid-style redirect unwrap. Parsed rows now preserve provider, email metadata, source URL, parse confidence, and actionable/non-actionable routing reason.
-- Updated the launcher UX with package-local email folder controls: Create / Open Email Import Folder, Select Existing Email Folder, Test Email Import, Run Demo With Email Alerts, Open Processed Folder, Open Rejected Folder, and Reset To Default Import Folder.
-- Added focused regression coverage for package-root detection, package-local email folder creation, GUI folder actions, dry-run behavior, duplicate suppression across runs, BidCentral-style daily matches, bidsandtenders-style daily notifications, and email-to-tender routing.
+- Updated the launcher UX with external-runtime email folder controls: Create / Open Email Import Folder, Select Existing Email Folder, Test Email Import, Run With Email Alerts, Open Processed Folder, Open Rejected Folder, and Reset To Default Import Folder.
+- Added focused regression coverage for package-root detection, runtime-isolated email folder creation, GUI folder actions, dry-run behavior, duplicate suppression across runs, BidCentral-style daily matches, bidsandtenders-style daily notifications, and email-to-tender routing.
 
 ## Patch 5.20 (product-finishing pass)
 
@@ -5026,6 +4958,7 @@ LOGICAL_TAB_COLOR_GROUPS: list[tuple[str, str, list[str]]] = [
     ]),
     ("Future project pipeline", TAB_COLOR_FUTURE, [
         "BID_LATER_Future_Projects",
+        "Keyword_Change_Audit",
         "New_This_Run",
         "Watchlist_Monitor",
         "Analyzed_Set_Aside",
@@ -5098,23 +5031,27 @@ WORKBOOK_MAP_DETAIL_ROWS: list[tuple] = [
      "Analyzed_Set_Aside (scored source pool), Watchlist_Monitor",
      "Outreach_Tracker, Developer_Watchlist, Top_Civil_Leads_Printable, Executive_Summary",
      "Daily work / future opportunities", ""),
-    ("Future project pipeline", 2, "New_This_Run", "Delta / newly added leads",
+    ("Future project pipeline", 2, "Keyword_Change_Audit", "RESCORE_ALWAYS change audit",
+     "Shows old/new score, Vancouver tier, and routing bucket after editable keyword changes.",
+     "BID_LATER_Future_Projects / keywords.xlsx", "Slim user master audit", "Weekly review",
+     "Legacy Vancouver rows without scoring snapshots are explicitly marked."),
+    ("Future project pipeline", 3, "New_This_Run", "Delta / newly added leads",
      "Shows only new future-project records versus prior run/workbook.",
      "BID_LATER_Future_Projects", "Daily review", "Daily review", ""),
-    ("Future project pipeline", 3, "Watchlist_Monitor", "Review queue",
+    ("Future project pipeline", 4, "Watchlist_Monitor", "Review queue",
      "Records requiring manual review or future workflow before they become higher-confidence opportunities.",
      "Municipal source sweep", "BID_LATER_Future_Projects (future promotion), Acquisition_Funnel_And_Speed",
      "Daily review", ""),
-    ("Future project pipeline", 4, "Analyzed_Set_Aside", "Filtered-out scored archive",
+    ("Future project pipeline", 5, "Analyzed_Set_Aside", "Filtered-out scored archive",
      "Collected/scored records that did not make the active BID LATER list, retained for diagnostics.",
      "Municipal source sweep", "BID_LATER_Future_Projects (source pool), Surrey_Historical_Archive",
      "Debugging / reference", ""),
-    ("Future project pipeline", 5, "Surrey_Historical_Archive", "Historical/terminal archive",
+    ("Future project pipeline", 6, "Surrey_Historical_Archive", "Historical/terminal archive",
      "Surrey terminal/historical development applications preserved but excluded from active BID LATER counts.",
      "Analyzed_Set_Aside", "Debugging / reference", "Debugging / reference",
      "Filtered/historical output of the future-project pipeline - shares orange with BID_LATER_Future_Projects, "
      "same reasoning as Tender_History_Closed_Public in the tender pipeline."),
-    ("Future project pipeline", 6, "Top_Civil_Leads_Printable", "Printable shortlist",
+    ("Future project pipeline", 7, "Top_Civil_Leads_Printable", "Printable shortlist",
      "Presentation-friendly shortlist pulled from BID_LATER_Future_Projects.",
      "BID_LATER_Future_Projects", "Presentation / follow-up", "Presentation / follow-up", ""),
     ("Outreach + relationships", 1, "Outreach_Tracker", "CRM / follow-up tracker",
@@ -5591,6 +5528,7 @@ KNOWN_SHEET_HEADER_ROWS: dict[str, int] = {
     "Tender_History_Closed_Public": 2,
     "Tender_Signals_All": 2,
     "BID_LATER_Future_Projects": 2,
+    "Keyword_Change_Audit": 2,
     "New_This_Run": 2,
     "Outreach_Tracker": 1,
     "Developer_Watchlist": 2,
@@ -5625,6 +5563,13 @@ def _header_row_index(ws) -> int:
     template this script doesn't otherwise know the internal layout of),
     and finally to row 1 if freeze_panes gives no usable signal either.
     """
+    # Keyword_Change_Audit exists in two intentional forms: the technical
+    # workbook has a note on row 1 and headers on row 2, while the slim user
+    # master starts directly with "Lead ID" on row 1. Detect that immutable
+    # schema marker before consulting the technical-sheet table so founder
+    # Assigned To/Status/Notes can be read back on the next run.
+    if ws.title == "Keyword_Change_Audit" and clean_text(ws.cell(1, 1).value) == "Lead ID":
+        return 1
     known = KNOWN_SHEET_HEADER_ROWS.get(ws.title)
     if known is not None:
         return known
@@ -6267,6 +6212,9 @@ def open_output_folder(folder: Path) -> bool:
     (e.g. some sandboxed environments). Returns True if a launch attempt
     succeeded, False if neither approach worked.
     """
+    if os.environ.get("TENDER_FINDER_DEMO_NO_OPEN", "").strip() == "1":
+        print(f"Folder auto-open skipped by TENDER_FINDER_DEMO_NO_OPEN: {folder}", flush=True)
+        return False
     try:
         if hasattr(os, "startfile"):
             os.startfile(str(folder))  # type: ignore[attr-defined]
@@ -6461,7 +6409,8 @@ def finalize_integrated_review_outputs(demo_workbook_path: Path) -> dict[str, An
     result.pop("_master_wb", None)
 
     opened = open_output_folder(final_folder)
-    print(f"- Folder opened: {'PASS' if opened else 'FAIL'}", flush=True)
+    open_status = "SKIPPED (no-open mode)" if os.environ.get("TENDER_FINDER_DEMO_NO_OPEN", "").strip() == "1" else ("PASS" if opened else "FAIL")
+    print(f"- Folder opened: {open_status}", flush=True)
 
     print(f"final_integrated_review_demo_workbook={final_demo_path}", flush=True)
     print(f"final_integrated_review_integrated_master_workbook={final_master_path}", flush=True)
@@ -6488,8 +6437,9 @@ def finalize_integrated_review_outputs(demo_workbook_path: Path) -> dict[str, An
 # normal TENDER_FINDER user (estimator / BD / admin).
 #
 # The user-facing master built below is a SEPARATE, much smaller workbook:
-# at most 7 visible tabs (Start_Here, Dashboard, Active_Tenders,
-# Future_Projects, Outreach_Tracker, Source_Status, Weekly_Review_Log) plus
+# 9 focused visible tabs (Start_Here, Dashboard, Active_Tenders,
+# Future_Projects, Keyword_Change_Audit, Outreach_Tracker, Source_Status,
+# Potential_Sources_Next, Weekly_Review_Log) plus
 # up to 2 hidden support tabs (Lists, Config_Scope) carried over from the
 # master template. It is rebuilt fresh from the current run's demo data
 # every time - never a stale carryover - except for genuinely user-owned
@@ -6503,7 +6453,8 @@ USER_MASTER_GLOB = "TENDER_FINDER_Tender_Intelligence_Working_Master_USER_*.xlsx
 
 USER_MASTER_VISIBLE_SHEET_ORDER = [
     "README_START_HERE", "Dashboard", "Active_Tenders", "Future_Projects",
-    "Outreach_Tracker", "Source_Status", "Potential_Sources_Next", "Weekly_Review_Log",
+    "Keyword_Change_Audit", "Outreach_Tracker", "Source_Status",
+    "Potential_Sources_Next", "Weekly_Review_Log",
 ]
 USER_MASTER_HIDDEN_SUPPORT_SHEETS = ["Lists", "Config_Scope"]
 USER_MASTER_TAB_COLORS = {
@@ -6511,6 +6462,7 @@ USER_MASTER_TAB_COLORS = {
     "Dashboard": "1F4E79",
     "Active_Tenders": "4472C4",
     "Future_Projects": "ED7D31",
+    "Keyword_Change_Audit": "FFC000",
     "Outreach_Tracker": "7030A0",
     "Source_Status": "70AD47",
     "Potential_Sources_Next": "70AD47",
@@ -6520,7 +6472,7 @@ USER_MASTER_HIDDEN_TAB_COLOR = "808080"
 
 # Every one of these must stay OUT of the user master - see PART 6 of the
 # design spec (Potential_Sources_Next is deliberately NOT in this list - it
-# is an intentional 8th visible tab, cloned straight from the demo
+# is an intentional visible audit tab, cloned straight from the technical
 # workbook's already-built version; everything else here is either a
 # raw/technical demo tab or an original-master tab that isn't one of the
 # target user tabs).
@@ -6542,28 +6494,22 @@ FUTURE_PROJECTS_USER_LIMIT = 400
 OUTREACH_TRACKER_USER_LIMIT = 200
 OUTREACH_TRACKER_LEAD_MIN_FIT = 70
 
+USER_KEYWORD_AUDIT_HEADERS = [
+    "Lead ID", "Source ID", "Application No", "Old Score", "New Score", "Score Delta",
+    "Old Tier", "New Tier", "Old Bucket", "New Bucket", "Changed",
+    "Legacy Exception", "Assigned To", "Status", "Notes",
+]
+
 
 def find_latest_user_master_workbook(exclude_path: Path | None = None) -> Path | None:
-    """Find the newest previously-generated TENDER_FINDER_Tender_Intelligence_Working
-    _Master_USER_*.xlsx, used ONLY to preserve user-editable fields (Assigned
-    To, Bid Decision, Status, Outreach follow-up state, ...) by stable ID
-    across runs. Unlike find_latest_master_workbook(), returning None here
-    is not an error - a first run legitimately has nothing to preserve from.
-    """
-    out_root = Path("C:/tenderfinder_out")
-    if not out_root.exists():
+    """Return the isolated prior user master for this run mode, if present."""
+    candidate = LATEST_USER_MASTER_PATH
+    if not candidate.exists() or candidate.name.startswith("~$"):
         return None
-    candidates: set[Path] = set()
-    for path in out_root.rglob(USER_MASTER_GLOB):
-        if path.name.startswith("~$"):
-            continue
-        resolved = path.resolve()
-        if exclude_path and resolved == exclude_path.resolve():
-            continue
-        candidates.add(resolved)
-    if not candidates:
+    resolved = candidate.resolve()
+    if exclude_path and resolved == exclude_path.resolve():
         return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    return resolved
 
 
 def _load_prior_preserved_fields(prior_master_path: Path | None) -> dict[str, dict[str, dict[str, Any]]]:
@@ -6571,7 +6517,9 @@ def _load_prior_preserved_fields(prior_master_path: Path | None) -> dict[str, di
     (never by row position): Active_Tenders by Project ID, Future_Projects
     by Lead ID, Outreach_Tracker by lead_id.
     """
-    empty: dict[str, dict[str, dict[str, Any]]] = {"active_tenders": {}, "future_projects": {}, "outreach": {}}
+    empty: dict[str, dict[str, dict[str, Any]]] = {
+        "active_tenders": {}, "future_projects": {}, "outreach": {}, "keyword_audit": {},
+    }
     if not prior_master_path or not prior_master_path.exists():
         return empty
     try:
@@ -6579,7 +6527,9 @@ def _load_prior_preserved_fields(prior_master_path: Path | None) -> dict[str, di
     except Exception as exc:
         print(f"WARN: could not read prior user master {prior_master_path}: {exc}", flush=True)
         return empty
-    result: dict[str, dict[str, dict[str, Any]]] = {"active_tenders": {}, "future_projects": {}, "outreach": {}}
+    result: dict[str, dict[str, dict[str, Any]]] = {
+        "active_tenders": {}, "future_projects": {}, "outreach": {}, "keyword_audit": {},
+    }
     if "Active_Tenders" in wb.sheetnames:
         for row in _read_sheet_rows_as_dicts(wb["Active_Tenders"]):
             pid = row.get("Project ID")
@@ -6608,7 +6558,36 @@ def _load_prior_preserved_fields(prior_master_path: Path | None) -> dict[str, di
                     "source": row.get("source"), "source_url": row.get("source_url"),
                     "source_sheet": row.get("source_sheet"),
                 }
+    if "Keyword_Change_Audit" in wb.sheetnames:
+        for row in _read_sheet_rows_as_dicts(wb["Keyword_Change_Audit"]):
+            lid = row.get("Lead ID")
+            if not lid:
+                continue
+            result["keyword_audit"][str(lid)] = dict(row)
+            result["future_projects"].setdefault(
+                str(lid),
+                {
+                    "Assigned To": row.get("Assigned To"),
+                    "Status": row.get("Status"),
+                    "Notes": row.get("Notes"),
+                },
+            )
+    wb.close()
     return result
+
+
+def _restore_prior_weekly_review_log(prior_master_path: Path | None, target_wb: Workbook) -> bool:
+    """Carry the founder-owned weekly log forward from the prior user master."""
+    if not prior_master_path or not prior_master_path.exists() or "Weekly_Review_Log" not in target_wb.sheetnames:
+        return False
+    prior_wb = openpyxl.load_workbook(prior_master_path)
+    try:
+        if "Weekly_Review_Log" not in prior_wb.sheetnames:
+            return False
+        _clone_sheet_into(prior_wb["Weekly_Review_Log"], target_wb["Weekly_Review_Log"])
+        return True
+    finally:
+        prior_wb.close()
 
 
 USER_ACTIVE_TENDERS_HEADERS = [
@@ -6791,6 +6770,69 @@ def select_user_future_projects_rows(
         out_rows.append(values)
         out_dicts.append(dict(zip(USER_FUTURE_PROJECTS_HEADERS, values)))
     return out_rows, out_dicts, total_available_live
+
+
+def build_user_keyword_audit_rows(
+    demo_wb: Workbook,
+    prior_future: dict[str, dict[str, Any]],
+    prior_audit: dict[str, dict[str, Any]],
+) -> list[list[Any]]:
+    """Show changed routing/scoring while retaining founder-owned triage."""
+    current: list[dict[str, Any]] = []
+    if "Keyword_Change_Audit" in demo_wb.sheetnames:
+        current = _read_sheet_rows_as_dicts(demo_wb["Keyword_Change_Audit"])
+
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in current:
+        if event.get("changed") != "YES" and not event.get("exception"):
+            continue
+        lead_id = clean_text(event.get("lead_id"))
+        if not lead_id:
+            continue
+        manual = prior_future.get(lead_id) or prior_audit.get(lead_id) or {}
+        row = {
+            "Lead ID": lead_id,
+            "Source ID": event.get("source_id"),
+            "Application No": event.get("app_no"),
+            "Old Score": event.get("old_score"),
+            "New Score": event.get("new_score"),
+            "Score Delta": event.get("score_delta"),
+            "Old Tier": event.get("old_tier"),
+            "New Tier": event.get("new_tier"),
+            "Old Bucket": event.get("old_bucket"),
+            "New Bucket": event.get("new_bucket"),
+            "Changed": event.get("changed"),
+            "Legacy Exception": event.get("exception"),
+            "Assigned To": manual.get("Assigned To"),
+            "Status": manual.get("Status") or "Needs Review",
+            "Notes": manual.get("Notes"),
+        }
+        output.append(row)
+        seen.add(lead_id)
+
+    # Keep previously audited manual triage even when the lead remains below
+    # the current gate or disappears from the current input snapshot.
+    for lead_id, prior in prior_audit.items():
+        if lead_id in seen:
+            continue
+        output.append({header: prior.get(header) for header in USER_KEYWORD_AUDIT_HEADERS})
+        seen.add(lead_id)
+
+    for lead_id, manual in prior_future.items():
+        if lead_id in seen or not any(manual.get(key) not in (None, "") for key in ("Assigned To", "Status", "Notes")):
+            continue
+        output.append({
+            "Lead ID": lead_id,
+            "Changed": "YES",
+            "New Bucket": "NOT_IN_CURRENT_RESULT",
+            "Legacy Exception": "manual_triage_retained_outside_current_result",
+            "Assigned To": manual.get("Assigned To"),
+            "Status": manual.get("Status") or "Needs Review",
+            "Notes": manual.get("Notes"),
+        })
+
+    return [[row.get(header) for header in USER_KEYWORD_AUDIT_HEADERS] for row in output]
 
 
 OUTREACH_TRACKER_HEADERS = [
@@ -7088,7 +7130,7 @@ def build_user_facing_master_workbook(
 
     Uses the original master as a styling template (per the design spec's
     "if using the original master as base" option): every sheet NOT in the
-    target 7 visible + 2 hidden support tabs is removed from this OUTPUT
+    target focused visible + 2 hidden support tabs is removed from this OUTPUT
     COPY only (the original master file is only ever opened for reading).
     Outreach_Tracker and Source_Status don't exist in the master template,
     so they're created fresh. Every target tab is then rebuilt from the
@@ -7108,7 +7150,9 @@ def build_user_facing_master_workbook(
         master_wb.create_sheet("Outreach_Tracker")
     if "Source_Status" not in master_wb.sheetnames:
         master_wb.create_sheet("Source_Status")
-    # Potential_Sources_Next is an intentional 8th visible tab (source
+    if "Keyword_Change_Audit" not in master_wb.sheetnames:
+        master_wb.create_sheet("Keyword_Change_Audit")
+    # Potential_Sources_Next is an intentional visible tab (source
     # expansion backlog - not a live-opportunity list, so it carries no
     # fixture-exclusion concerns). It isn't part of the master template, so
     # it's cloned straight from the demo workbook's already-built version
@@ -7135,6 +7179,17 @@ def build_user_facing_master_workbook(
     _trim_sheet_to_columns(ws, len(USER_FUTURE_PROJECTS_HEADERS))
     write_rows(ws, USER_FUTURE_PROJECTS_HEADERS, future_rows, None, {
         "Project / Address": 40, "Scope Summary": 60, "Notes": 40, "Source URL": 50,
+    })
+
+    keyword_audit_rows = build_user_keyword_audit_rows(
+        demo_wb,
+        prior["future_projects"],
+        prior["keyword_audit"],
+    )
+    ws = master_wb["Keyword_Change_Audit"]
+    write_rows(ws, USER_KEYWORD_AUDIT_HEADERS, keyword_audit_rows, None, {
+        "Lead ID": 22, "Source ID": 24, "Old Bucket": 22, "New Bucket": 22,
+        "Legacy Exception": 42, "Assigned To": 20, "Status": 20, "Notes": 50,
     })
 
     outreach_rows = build_user_outreach_tracker_rows(demo_wb, active_dicts, future_dicts, prior["outreach"], run_timestamp)
@@ -7177,8 +7232,9 @@ def build_user_facing_master_workbook(
     _trim_sheet_to_columns(ws, 2)
     build_user_start_here(ws, run_timestamp)
 
-    # Weekly_Review_Log is deliberately left untouched - it's a user-owned
-    # manual log carried straight over from the master template.
+    # Weekly_Review_Log is founder-owned and must come from the prior user
+    # master, not reset to the static package template on every run.
+    weekly_log_preserved = _restore_prior_weekly_review_log(prior_user_master_path, master_wb)
 
     apply_user_master_tab_colors(master_wb)
     reorder_user_master_sheets(master_wb)
@@ -7191,9 +7247,11 @@ def build_user_facing_master_workbook(
         "future_projects_rows": len(future_rows),
         "future_projects_live_total_in_demo": future_total_live,
         "outreach_rows": len(outreach_rows),
+        "keyword_audit_rows": len(keyword_audit_rows),
         "source_status_rows": len(source_status_rows),
         "dashboard_counts": counts,
         "prior_user_master_used": str(prior_user_master_path) if prior_user_master_path else None,
+        "weekly_review_log_preserved": weekly_log_preserved,
     }
 
 
@@ -7246,7 +7304,8 @@ def verify_user_master(
     demo_wb = openpyxl.load_workbook(demo_path) if checks["full_demo_produced"] else None
 
     visible_names = [n for n in wb.sheetnames if wb[n].sheet_state == "visible"] if wb else []
-    checks["visible_tab_count_ok"] = 0 < len(visible_names) <= 8
+    # Eight operational tabs plus the founder-visible Keyword_Change_Audit.
+    checks["visible_tab_count_ok"] = 0 < len(visible_names) <= 9
     checks["no_demo_only_tabs_visible"] = wb is not None and not (set(visible_names) & USER_MASTER_EXCLUDED_TAB_NAMES)
 
     duplicate_pair_names = {"BID_NOW_Active_Tenders", "BID_LATER_Future_Projects", "Executive_Summary", "Workbook_Map", "Source_Run_Log", "Acquisition_Funnel_And_Speed"}
@@ -7332,7 +7391,7 @@ def verify_user_master(
     print(f"- Full demo workbook: {_pf(checks['full_demo_produced'])}", flush=True)
     print(f"- Slim user master workbook: {_pf(checks['user_master_produced'])}", flush=True)
     print(f"- Generated from latest same-run demo: {_pf(checks['active_tenders_current'])}", flush=True)
-    print(f"- Visible tab count <= 8: {_pf(checks['visible_tab_count_ok'])} ({len(visible_names)}: {visible_names})", flush=True)
+    print(f"- Visible tab count <= 9: {_pf(checks['visible_tab_count_ok'])} ({len(visible_names)}: {visible_names})", flush=True)
     print(f"- No demo-only technical tabs visible: {_pf(checks['no_demo_only_tabs_visible'])}", flush=True)
     print(f"- No duplicate-purpose tabs visible: {_pf(checks['no_duplicate_purpose_tabs_visible'])}", flush=True)
     print(f"- Active_Tenders refreshed/current: {_pf(checks['active_tenders_current'] and checks['active_tenders_no_placeholder_rows'])} ({len(active_rows)} rows)", flush=True)
@@ -7362,7 +7421,7 @@ def finalize_final_review_outputs(demo_workbook_path: Path) -> dict[str, Any]:
     2. Find the latest hand-maintained TENDER_FINDER_Tender_Intelligence_Working_
        Master_*.xlsx (never a previously-generated FILLED/INTEGRATED/USER
        output - see MASTER_WORKBOOK_OWN_OUTPUT_MARKERS).
-    3. Build a new slim USER-facing master: at most 7 visible tabs, rebuilt
+    3. Build a new slim USER-facing master with focused visible tabs, rebuilt
        fresh from this run's demo data, with user-owned fields preserved by
        stable ID from the previous user master. See
        build_user_facing_master_workbook() and its module note above.
@@ -7387,7 +7446,10 @@ def finalize_final_review_outputs(demo_workbook_path: Path) -> dict[str, Any]:
     else:
         print("PRIOR_USER_MASTER_FOUND=none (first run - nothing to preserve)", flush=True)
 
-    final_folder = create_clean_final_output_folder(prefix="final_user_master_")
+    final_folder = create_clean_final_output_folder(
+        out_root=demo_workbook_path.parent,
+        prefix="final_user_master_",
+    )
     timestamp = final_folder.name.replace("final_user_master_", "")
     user_master_name = f"TENDER_FINDER_Tender_Intelligence_Working_Master{MASTER_WORKBOOK_USER_MARKER}{timestamp}.xlsx"
     final_demo_path = final_folder / "TENDER_FINDER_DEMO_Opportunities_Three_Buckets.xlsx"
@@ -7405,8 +7467,20 @@ def finalize_final_review_outputs(demo_workbook_path: Path) -> dict[str, Any]:
         final_user_master_path, final_demo_path, final_folder, user_master_stats, original_master_untouched,
     )
 
+    if verification["passed"]:
+        LATEST_USER_MASTER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        latest_temp = LATEST_USER_MASTER_PATH.with_suffix(".xlsx.tmp")
+        try:
+            shutil.copy2(final_user_master_path, latest_temp)
+            os.replace(latest_temp, LATEST_USER_MASTER_PATH)
+        finally:
+            if latest_temp.exists():
+                latest_temp.unlink()
+        print(f"LATEST_USER_MASTER_UPDATED={LATEST_USER_MASTER_PATH}", flush=True)
+
     opened = open_output_folder(final_folder)
-    print(f"- Folder opened: {'PASS' if opened else 'FAIL'}", flush=True)
+    open_status = "SKIPPED (no-open mode)" if os.environ.get("TENDER_FINDER_DEMO_NO_OPEN", "").strip() == "1" else ("PASS" if opened else "FAIL")
+    print(f"- Folder opened: {open_status}", flush=True)
 
     print(f"final_user_master_demo_workbook={final_demo_path}", flush=True)
     print(f"final_user_master_user_master_workbook={final_user_master_path}", flush=True)
@@ -7430,12 +7504,42 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--no-fetch", action="store_true", help="Skip Track B live tender fetch.")
     ap.add_argument("--email-intake", action="store_true", help="Parse user-approved portal email alerts into BID NOW when available.")
     ap.add_argument("--email-import-path", default="", help="Optional local folder of .eml alert files to use for Email Alert Intake.")
+    ap.add_argument("--sources-config", default="", help="Optional canonical sources.csv override.")
+    ap.add_argument("--state-root", default="", help="Runtime history/state root outside the package.")
+    ap.add_argument("--run-id", default="", help="Stable run identifier supplied by the engine service.")
     return ap.parse_args()
 
 
 def main() -> int:
-    global LAST_BC_BID_OFFICIAL_FINDINGS
+    global LAST_BC_BID_OFFICIAL_FINDINGS, TENDER_SOURCES, BCBID_PUBLIC_URL
+    global BCBID_NETWORK_AUDIT_PATH, PATCH_5_18_BACKLOG_PATH, AUTONOMOUS_FIXES_PATH
     args = parse_args()
+    if args.sources_config:
+        os.environ["TENDER_FINDER_SOURCES_CONFIG"] = args.sources_config
+    run_mode = os.environ.get("TENDER_FINDER_RUN_MODE", "").strip() or (
+        "offline" if args.no_fetch else "live"
+    )
+    try:
+        configure_runtime_state(args.state_root or None, run_mode)
+    except RuntimeStateError as exc:
+        print(f"ERROR: {exc}", flush=True)
+        return 2
+    print(f"RUNTIME_STATE_ROOT={_RUNTIME_PATHS.root} mode={run_mode}", flush=True)
+    try:
+        TENDER_SOURCES = _load_runtime_tender_sources()
+    except SourceRegistryError as exc:
+        print(f"ERROR: {exc}", flush=True)
+        return 2
+    BCBID_PUBLIC_URL = next(
+        (source["url"] for source in TENDER_SOURCES if source["source_id"] == "bc_bid_public"),
+        "",
+    )
+
+    print(
+        f"SOURCE_REGISTRY_VALID={os.environ.get('TENDER_FINDER_SOURCES_CONFIG') or 'config/sources.csv'} "
+        f"active_tender_sources={len(TENDER_SOURCES)}",
+        flush=True,
+    )
     try:
         keyword_config = load_keywords_config(force_reload=True)
     except KeywordConfigError as exc:
@@ -7452,9 +7556,12 @@ def main() -> int:
         probe = out_dir / ".tenderfinder_write_probe"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
-    except Exception:
-        out_dir = ROOT / mirror_name_for(str(args.out_dir))
-        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        print(f"ERROR: output folder is not writable: {out_dir} ({exc})", flush=True)
+        return 1
+    BCBID_NETWORK_AUDIT_PATH = out_dir / "BC_BID_NETWORK_AUDIT.md"
+    PATCH_5_18_BACKLOG_PATH = out_dir / "PATCH_5_18_BACKLOG.md"
+    AUTONOMOUS_FIXES_PATH = out_dir / "AUTONOMOUS_FIXES.md"
 
     print("TENDER_FINDER_STAGE: Preparing output folder and history archive", flush=True)
     archived_history = archive_pre_511_history()
@@ -7555,18 +7662,6 @@ def main() -> int:
         if l.source_id in {"tol_public_tenders", "maple_ridge_rfps", "surrey_bids_public"}
     )
     record_stage(out_dir, "completed")
-    mirror_name = mirror_name_for(out_dir.name)
-    if not args.no_fetch and out_dir.resolve() != (ROOT / mirror_name).resolve():
-        mirror = ROOT / mirror_name
-        mirror.mkdir(parents=True, exist_ok=True)
-        for item in out_dir.iterdir():
-            dest = mirror / item.name
-            if item.is_file():
-                shutil.copy2(item, dest)
-            elif item.is_dir():
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(item, dest)
     print(f"DONE in {total_seconds:.2f}s")
     print(f"BID NOW={len(bid_now_tenders)} civil_yes={civil} open_civil={open_civil} cross_linked={linked} BID LATER={len(data.future)} (>=60:{data.fit_ge_60} >=70:{data.fit_ge_70}) WATCH={len(data.watch)} ANALYZED={len(data.analyzed)}")
     print(f"BC Bid public URL={BCBID_PUBLIC_URL} status={bc_bid_log.status if bc_bid_log else 'NOT_ATTEMPTED'} open_civil={len(bc_bid_open)} samples={[t.tender_title for t in bc_bid_open[:3]]}")
@@ -7581,10 +7676,8 @@ def main() -> int:
     print(f"summary={out_dir / 'demo_summary.txt'}")
     if data.history_archive:
         print(f"demo_history={data.history_archive}")
-    print(f"Live tenders: {email_state.state} - bidsandtenders.ca remains alert-driven; BC Bid direct public browse is documented in docs/BC_BID_NETWORK_AUDIT.md.")
+    print(f"Live tenders: {email_state.state} - bidsandtenders.ca remains alert-driven; BC Bid direct public browse audit is run-local.")
     print(f"bc_bid_network_audit={BCBID_NETWORK_AUDIT_PATH}")
-    if not args.no_fetch and out_dir.resolve() != (ROOT / mirror_name).resolve():
-        print(f"repo_mirror={ROOT / mirror_name}")
 
     print("TENDER_FINDER_STAGE: Building final-review outputs (demo workbook + slim user-facing master)", flush=True)
     try:

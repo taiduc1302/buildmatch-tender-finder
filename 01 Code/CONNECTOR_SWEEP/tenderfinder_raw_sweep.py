@@ -11,7 +11,7 @@ workbook (v7) schema.
 
 Target architecture:
   Source_Register / Run_Queue
-    -> technical endpoint registry (tenderfinder_dev_app_endpoints.csv)
+    -> canonical editable registry (config/sources.csv)
     -> safe probe / sweep dispatcher (fetch_type routes)
     -> classification + scoring (tenderfinder_guards)
     -> dedup / update (tenderfinder_master_io)
@@ -52,6 +52,7 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
+from pathlib import Path
 
 try:
     import requests  # type: ignore
@@ -74,6 +75,7 @@ from tenderfinder_keywords_config import (
     load_keywords_config,
     print_validation_summary,
 )
+from tenderfinder_runtime import default_output_root
 
 
 # ---------------------------------------------------------------------------
@@ -732,6 +734,9 @@ def normalize_lead(conn, layer_name, attrs):
         "assigned_to": "",
         "notes": f"Auto-extracted from {layer_name}. Owner/value need manual 2nd pass.",
         "address": str(address),         # dedup helper (not a FP column)
+        # Bounded replay seam: lets future keyword edits rescore Vancouver's
+        # non-score tier without retaining an unbounded raw payload in Excel.
+        "keyword_scoring_text": blob[:30000],
         "_raw": attrs,
     }
 
@@ -1015,17 +1020,7 @@ def _save_raw(raw_dir, cid, recs):
 # ============================================================================
 def _van_permit_fit_tier(attrs):
     """Return 'strong', 'watchlist', 'bulk', or 'noisy' for a Van permit row."""
-    config = load_keywords_config()
-    blob = " ".join(str(v) for v in attrs.values() if v)
-    high = config.match_count("van_signal_primary", blob)
-    low = config.match_count("van_signal_secondary", blob)
-    if high >= 2 or (high >= 1 and low == 0):
-        return "strong"
-    if high >= 1:
-        return "watchlist"
-    if low >= 1:
-        return "noisy"
-    return "bulk"
+    return G.van_permit_fit_tier(attrs)
 
 def apply_van_permit_filter(result):
     """Re-route Vancouver building permit records: strong→Future_Projects,
@@ -1528,14 +1523,7 @@ def _write_demo_output(results, path, run_id):
 # Main
 # ============================================================================
 def load_config(path):
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
-    out = {}
-    for r in rows:
-        sid = r.get("source_id") or r.get("id")
-        if sid:
-            out[sid] = r
-    return out
+    return REG.load_development_connectors(path, active_only=True)
 
 
 def print_registry(connectors):
@@ -1550,7 +1538,11 @@ def print_registry(connectors):
 
 def main():
     ap = argparse.ArgumentParser(description="TENDER_FINDER controlled all-source probe/load runner")
-    ap.add_argument("--config", default="tenderfinder_dev_app_endpoints.csv")
+    ap.add_argument(
+        "--config",
+        default=str(REG.resolve_registry_path()),
+        help="canonical source registry (default: package config/sources.csv)",
+    )
     ap.add_argument("--from-master", default="", help="master v7 workbook to read Source_Register/Run_Queue")
     ap.add_argument("--write-master", default="", help="master v7 workbook to write leads into (created from v6 if needed)")
     ap.add_argument("--v6", default="../../00 Master/TENDER_FINDER_Tender_Intelligence_Working_Master_v6.xlsx",
@@ -1558,7 +1550,11 @@ def main():
     ap.add_argument("--tier", type=int, default=0, help="load only this priority tier")
     ap.add_argument("--category", default="", help="filter by category prefix, e.g. 'B'")
     ap.add_argument("--only", default="", help="comma-separated source ids/aliases")
-    ap.add_argument("--out", default="./tenderfinder_raw_out", help="output dir or probe/review xlsx path")
+    ap.add_argument(
+        "--out",
+        default=str(default_output_root() / "raw_sweep"),
+        help="output dir or probe/review xlsx path (default is outside the package)",
+    )
     ap.add_argument("--max-records", type=int, default=20000)
     ap.add_argument("--probe", action="store_true", help="resolve endpoints only, no pull")
     ap.add_argument("--dry-run", action="store_true", help="pull + classify but do not write master")
@@ -1661,7 +1657,8 @@ def main():
             print("--sync-registry needs --from-master <workbook>", file=sys.stderr)
             sys.exit(2)
         rows, summary = REG.build_sync_report(args.from_master, args.config)
-        out = args.out if args.out.endswith(".csv") else "sync_report.csv"
+        out = args.out if args.out.endswith(".csv") else str(Path(args.out).resolve() / "sync_report.csv")
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
         REG.write_sync_report_csv(rows, out)
         print(f"\nSync report -> {out}  ({len(rows)} sources)")
         for k in sorted(summary):
@@ -1689,7 +1686,9 @@ def main():
         return
 
     stamp = dt.date.today().isoformat()
-    raw_dir = os.path.join("raw_runs", stamp)
+    selected_out = Path(args.out).expanduser().resolve()
+    out_base = selected_out.parent if selected_out.suffix else selected_out
+    raw_dir = str(out_base / "raw_runs" / stamp)
     os.makedirs(raw_dir, exist_ok=True)
 
     if args.probe:
@@ -1955,6 +1954,8 @@ def _review_rows(results):
                 "scope_summary": lead.get("scope_summary"),
                 "fit_score": lead.get("fit_score"),
                 "fit_reason": lead.get("fit_reason") or "",
+                "van_permit_fit_tier": lead.get("van_permit_fit_tier") or "",
+                "keyword_scoring_text": lead.get("keyword_scoring_text") or "",
                 "proposed_route": lead.get("proposed_route") or "Future_Projects",
                 "write_eligible": bool(lead.get("write_eligible")),
                 "hold_reason": lead.get("hold_reason") or "",
@@ -1980,6 +1981,8 @@ def _review_rows(results):
                 "scope_summary": item.get("scope_summary"),
                 "fit_score": item.get("fit_score"),
                 "fit_reason": "",
+                "van_permit_fit_tier": "",
+                "keyword_scoring_text": "",
                 "proposed_route": "Rejected_Archive",
                 "write_eligible": False,
                 "hold_reason": item.get("reason") or r.get("status") or "rejected",
@@ -2004,6 +2007,8 @@ def _review_rows(results):
                 "scope_summary": r.get("richness") or r.get("next_action") or "",
                 "fit_score": "",
                 "fit_reason": "",
+                "van_permit_fit_tier": "",
+                "keyword_scoring_text": "",
                 "proposed_route": r.get("output_route") or "Run_Queue",
                 "write_eligible": False,
                 "hold_reason": r.get("status") or r.get("error") or "no_normalized_records",
@@ -2021,7 +2026,8 @@ def _review_rows(results):
 def _write_review_output(results, path):
     cols = ["source_id", "source_name", "project_id", "municipality", "app_no",
             "address", "owner/applicant", "app_type_stage", "scope_summary",
-            "fit_score", "fit_reason", "proposed_route", "write_eligible", "hold_reason",
+            "fit_score", "fit_reason", "van_permit_fit_tier", "keyword_scoring_text",
+            "proposed_route", "write_eligible", "hold_reason",
             "source_url", "evidence_url", "date_found", "run_id", "raw_hash", "dedupe_key",
             "review_decision"]  # Patch 5.0: ACCEPT | REJECT | HOLD | NEEDS_MORE_INFO
     rows = _review_rows(results)

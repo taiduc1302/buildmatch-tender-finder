@@ -1,9 +1,16 @@
 # TENDER_FINDER raw development-application sweep — connector pack
 
-Two files do the work:
+The canonical registry and collector do the work:
 
-- **`tenderfinder_dev_app_endpoints.csv`** — the connector registry (16 sources). Edit this, not the script, to add/disable sources or paste verified URLs.
-- **`tenderfinder_raw_sweep.py`** — the collector. Reads the registry, pulls **raw** records, writes one Excel + one CSV + per-connector raw JSON, and prints a run log telling you which connectors are live.
+- **`..\..\config\sources.csv`** — the single runtime registry for all tender
+  and development sources. Prefer the GUI **Source Checks** tab to add/edit,
+  enable/disable, validate, and test rows; writes are validated and atomic.
+- **`tenderfinder_raw_sweep.py`** — the development-track collector. It reads
+  active development rows from that canonical registry, pulls **raw** records,
+  writes Excel/CSV/raw JSON, and records each connector's result.
+
+`tenderfinder_dev_app_endpoints.csv` remains only as a legacy 18-row reference
+snapshot. Editing it does not change a normal run.
 
 This is the **COLLECT** layer only. It does not score, filter, or judge TENDER_FINDER-fit — that is the next (prompt) layer. Raw stays raw so it can be re-scored any time. Access is sanctioned open-data APIs only (ArcGIS REST, Opendatasoft); no scraping.
 
@@ -24,7 +31,7 @@ python tenderfinder_raw_sweep.py
 # 3) Just the confirmed flagships
 python tenderfinder_raw_sweep.py --only twp_langley_devactivity,maple_ridge_devapps,van_building_permits,van_city_projects
 
-# Output lands in ./tenderfinder_raw_out/<date>/  (tenderfinder_raw_sweep.xlsx, .csv, raw_json/, run_log.json)
+# Output lands under C:\tenderfinder_out (Excel, CSV, raw JSON, run log)
 ```
 
 `--probe` is the important one. It shows, per connector, the exact REST/ODS layer URL it resolved — so you can see what is live and what needs a manual endpoint before you commit to a full pull.

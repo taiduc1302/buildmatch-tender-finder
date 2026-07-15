@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -22,9 +23,11 @@ from tenderfinder_package_paths import (  # noqa: E402
     ensure_email_alert_dirs,
     tenderfinder_user_config_path,
 )
+from tenderfinder_runtime import STATE_ROOT_ENV_VAR  # noqa: E402
 
 
 def build_fake_package_root(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
     (root / "run_tenderfinder_demo.bat").write_text("@echo off\n", encoding="utf-8")
     (root / "verify_package.bat").write_text("@echo off\n", encoding="utf-8")
     (root / "inputs").mkdir(parents=True, exist_ok=True)
@@ -35,48 +38,63 @@ def build_fake_package_root(root: Path) -> Path:
 def main() -> int:
     fixtures = Path(__file__).resolve().parent / "fixtures" / "email_alerts"
     with tempfile.TemporaryDirectory() as tmp:
-        root = build_fake_package_root(Path(tmp))
-        nested = root / "01 Code" / "CONNECTOR_SWEEP" / "nested" / "script.py"
-        nested.parent.mkdir(parents=True, exist_ok=True)
-        nested.write_text("pass", encoding="utf-8")
+        base = Path(tmp)
+        root = build_fake_package_root(base / "package")
+        state = base / "state"
+        previous_state = os.environ.get(STATE_ROOT_ENV_VAR)
+        os.environ[STATE_ROOT_ENV_VAR] = str(state)
+        try:
+            return _run_test(root, fixtures, state)
+        finally:
+            if previous_state is None:
+                os.environ.pop(STATE_ROOT_ENV_VAR, None)
+            else:
+                os.environ[STATE_ROOT_ENV_VAR] = previous_state
 
-        detected = detect_package_root(nested)
-        assert detected == root
 
-        dirs = ensure_email_alert_dirs(root)
-        for key in ("inbox", "processed", "rejected", "logs"):
-            assert dirs[key].exists(), f"missing {key}"
-            assert (dirs[key] / "README.md").exists(), f"missing {key} README"
+def _run_test(root: Path, fixtures: Path, state: Path) -> int:
+    nested = root / "01 Code" / "CONNECTOR_SWEEP" / "nested" / "script.py"
+    nested.parent.mkdir(parents=True, exist_ok=True)
+    nested.write_text("pass", encoding="utf-8")
 
-        chosen = root / "OneDrive Test" / "Email notifications for test"
-        chosen.mkdir(parents=True, exist_ok=True)
-        config_path = connect_email_provider("manual_folder", import_path=str(chosen), root=root)
-        assert config_path == tenderfinder_user_config_path(root)
-        config = load_email_provider_config(root)
-        assert config.import_path == str(chosen)
-        assert current_email_import_folder(root) == chosen
+    detected = detect_package_root(nested)
+    assert detected == root
 
-        working = root / "work_emails"
-        shutil.copytree(fixtures, working)
-        before = sorted(p.name for p in working.glob("*.eml"))
-        result = test_email_intake(working, provider_config=config, root=root)
-        after = sorted(p.name for p in working.glob("*.eml"))
-        assert before == after, "dry-run moved or modified email files"
-        assert result.alert_emails_found >= 6
-        assert result.log_path and Path(result.log_path).exists()
+    dirs = ensure_email_alert_dirs(root)
+    assert dirs["user_data"] == (state / "settings").resolve()
+    for key in ("inbox", "processed", "rejected", "logs"):
+        assert dirs[key].exists(), f"missing {key}"
+        assert (dirs[key] / "README.md").exists(), f"missing {key} README"
 
-        out_dir = root / "email_out"
-        status1, rows1, report1 = run_email_intake(out_dir, working, dry_run=False, provider_config=config, root=root)
-        assert status1 == "EMAIL_INTAKE_PARSED_ROWS"
-        assert rows1, "expected parsed rows on first run"
-        assert email_import_state_path(root).exists(), "import state not written"
+    chosen = root / "OneDrive Test" / "Email notifications for test"
+    chosen.mkdir(parents=True, exist_ok=True)
+    config_path = connect_email_provider("manual_folder", import_path=str(chosen), root=root)
+    assert config_path == tenderfinder_user_config_path(root)
+    config = load_email_provider_config(root)
+    assert config.import_path == str(chosen)
+    assert current_email_import_folder(root) == chosen
 
-        status2, rows2, report2 = run_email_intake(out_dir, working, dry_run=False, provider_config=config, root=root)
-        assert status2 in {"EMAIL_INTAKE_REJECTED_FILES", "EMAIL_INTAKE_PARSE_ZERO_ROWS"}
-        assert not rows2, "duplicate run should not emit new rows"
-        assert report2.duplicate_emails_detected >= 1
+    working = root / "work_emails"
+    shutil.copytree(fixtures, working)
+    before = sorted(p.name for p in working.glob("*.eml"))
+    result = test_email_intake(working, provider_config=config, root=root)
+    after = sorted(p.name for p in working.glob("*.eml"))
+    assert before == after, "dry-run moved or modified email files"
+    assert result.alert_emails_found >= 6
+    assert result.log_path and Path(result.log_path).exists()
 
-        print("Email import folder UX tests: PASS")
+    out_dir = root / "email_out"
+    status1, rows1, report1 = run_email_intake(out_dir, working, dry_run=False, provider_config=config, root=root)
+    assert status1 == "EMAIL_INTAKE_PARSED_ROWS"
+    assert rows1, "expected parsed rows on first run"
+    assert email_import_state_path(root).exists(), "import state not written"
+
+    status2, rows2, report2 = run_email_intake(out_dir, working, dry_run=False, provider_config=config, root=root)
+    assert status2 in {"EMAIL_INTAKE_REJECTED_FILES", "EMAIL_INTAKE_PARSE_ZERO_ROWS"}
+    assert not rows2, "duplicate run should not emit new rows"
+    assert report2.duplicate_emails_detected >= 1
+
+    print("Email import folder UX tests: PASS")
     return 0
 
 

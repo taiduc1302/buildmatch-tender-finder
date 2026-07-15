@@ -1,5 +1,21 @@
 # AUTONOMOUS_FIXES
 
+## Standalone weekly release — 2026-07-14
+
+- Added a GUI-independent engine, isolated run/state manifests, and one shared
+  offline Self-Test used by the GUI and `verify_package.bat`.
+- Added `RESCORE_ALWAYS`, bounded editable regex handling, stable-ID keyword
+  change audit, manual triage/Weekly Review Log retention, and the explicit
+  legacy Vancouver no-snapshot exception.
+- Replaced runtime hardcoded source lists with `config/sources.csv` and added
+  GUI source add/edit/enable/disable/validate/offline-test/live-test controls.
+- Moved email inboxes, logs, duplicate state, and settings out of the program
+  folder to `C:\tenderfinder_out`; older package-local `.eml` folders remain
+  discoverable read-only so no user messages are moved or lost.
+
+The package-local paths described in the older Patch 5.22 notes below are
+historical behavior and are superseded by this release.
+
 ## Patch 5.23
 
 - Reworked the TENDER_FINDER desktop launcher into a tabbed, 1366x768-safe layout with clear primary actions for full run, fast run, email import, source checks, and post-run result opening.

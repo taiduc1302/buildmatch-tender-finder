@@ -10,13 +10,10 @@ sys.path.insert(0, str(ROOT))
 
 from tenderfinder_review_workbook import legacy_review_xlsx_path  # noqa: E402
 
-# Patch 5.18 origin: run_tenderfinder_demo_fast.bat pointed at a stale review
-# workbook and silently produced different Track A totals than full mode
-# and the GUI. Patch 5.20 (product Task C) replaced the single hardcoded
-# path with a discovery chain (TENDER_FINDER_REVIEW_XLSX env var -> saved config ->
-# package-local inputs\ -> legacy machine path). The invariant these tests
-# now lock: every launch path implements the SAME chain with the SAME
-# fallbacks, so fast/full/GUI can never disagree on the Track A workbook.
+# The old fast launcher once used a stale absolute snapshot. The current
+# invariant is simpler: both compatibility batch launchers default to the
+# package-local reviewed workbook and permit one explicit environment override;
+# the GUI additionally remembers a selected path in isolated runtime state.
 
 LEGACY = r"C:\tenderfinder_out\patch5_10_live\all_live_review.xlsx"
 PACKAGE_LOCAL = r"inputs\all_live_review.xlsx"
@@ -27,16 +24,16 @@ def _bat_text(name: str) -> str:
     return (REPO_ROOT / name).read_text(encoding="utf-8")
 
 
-def _bat_legacy_value(text: str, name: str) -> str:
+def _bat_initial_value(text: str, name: str) -> str:
     m = re.search(r'set\s+"REVIEW_XLSX=([^"]+)"', text)
     assert m, f"could not find initial REVIEW_XLSX assignment in {name}"
     return m.group(1)
 
 
-def test_batch_launchers_share_the_same_discovery_chain() -> None:
+def test_batch_launchers_share_safe_package_local_default() -> None:
     for name in ("run_tenderfinder_demo.bat", "run_tenderfinder_demo_fast.bat"):
         text = _bat_text(name)
-        assert _bat_legacy_value(text, name) == LEGACY, f"{name} legacy fallback drifted"
+        assert _bat_initial_value(text, name) == r"%~dp0inputs\all_live_review.xlsx"
         assert PACKAGE_LOCAL in text, f"{name} must prefer package-local inputs\\all_live_review.xlsx"
         assert "TENDER_FINDER_REVIEW_XLSX" in text, f"{name} must honor the TENDER_FINDER_REVIEW_XLSX env var"
         # Order: env var must be applied AFTER package-local so it wins.
@@ -45,21 +42,20 @@ def test_batch_launchers_share_the_same_discovery_chain() -> None:
         )
 
 
-def test_gui_legacy_fallback_matches_batch_launchers() -> None:
-    if sys.platform.startswith("win"):
-        assert str(legacy_review_xlsx_path()) == LEGACY, (
-            "tenderfinder_review_workbook.legacy_review_xlsx_path() must match the "
-            ".bat launchers' legacy fallback"
-        )
+def test_gui_uses_shared_isolated_discovery_helper() -> None:
     gui_text = (ROOT / "tenderfinder_launcher_gui.py").read_text(encoding="utf-8")
     assert "discover_review_xlsx" in gui_text, "GUI must use the shared discovery chain"
     assert "legacy_review_xlsx_path" in gui_text, "GUI legacy fallback must come from the shared helper"
+    helper_text = (ROOT / "tenderfinder_review_workbook.py").read_text(encoding="utf-8")
+    assert "runtime_paths" in helper_text
+    assert "path.write_text" in helper_text
+    assert "_legacy_config_path" in helper_text, "old root setting remains read-only migration input"
 
 
 def test_stale_patch54_snapshot_is_not_the_active_review_xlsx() -> None:
     for name in ("run_tenderfinder_demo.bat", "run_tenderfinder_demo_fast.bat"):
         text = _bat_text(name)
-        assert _bat_legacy_value(text, name) != STALE_P54, (
+        assert _bat_initial_value(text, name) != STALE_P54, (
             f"{name} still sets REVIEW_XLSX to the stale p54 snapshot"
         )
 
@@ -70,27 +66,33 @@ def test_discovery_chain_order() -> None:
     import os
     import tempfile
     from tenderfinder_review_workbook import discover_review_xlsx, save_runtime_config
+    from tenderfinder_runtime import STATE_ROOT_ENV_VAR
 
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        assert discover_review_xlsx(root)[0] in (None, legacy_review_xlsx_path())
-
-        package_local = root / "inputs" / "all_live_review.xlsx"
-        package_local.parent.mkdir()
-        package_local.write_text("stub")
-        path, source = discover_review_xlsx(root)
-        assert path == package_local and "package-local" in source
-
-        config_target = root / "elsewhere.xlsx"
-        config_target.write_text("stub")
-        save_runtime_config(root, {"review_xlsx": str(config_target)})
-        path, source = discover_review_xlsx(root)
-        assert path == config_target and "tenderfinder_runtime_config" in source
-
-        env_target = root / "env.xlsx"
-        env_target.write_text("stub")
-        old = os.environ.get("TENDER_FINDER_REVIEW_XLSX")
+        base = Path(tmp)
+        root = base / "package"
+        root.mkdir()
+        old_state = os.environ.get(STATE_ROOT_ENV_VAR)
+        old_review = os.environ.get("TENDER_FINDER_REVIEW_XLSX")
+        os.environ[STATE_ROOT_ENV_VAR] = str(base / "runtime_state")
         try:
+            assert discover_review_xlsx(root)[0] in (None, legacy_review_xlsx_path())
+
+            package_local = root / "inputs" / "all_live_review.xlsx"
+            package_local.parent.mkdir()
+            package_local.write_text("stub")
+            path, source = discover_review_xlsx(root)
+            assert path == package_local and "package-local" in source
+
+            config_target = root / "elsewhere.xlsx"
+            config_target.write_text("stub")
+            saved_path = save_runtime_config(root, {"review_xlsx": str(config_target)})
+            assert root not in saved_path.parents, "new runtime setting must stay outside the package root"
+            path, source = discover_review_xlsx(root)
+            assert path == config_target and "tenderfinder_runtime_config" in source
+
+            env_target = root / "env.xlsx"
+            env_target.write_text("stub")
             os.environ["TENDER_FINDER_REVIEW_XLSX"] = str(env_target)
             path, source = discover_review_xlsx(root)
             assert path == env_target and "environment" in source
@@ -99,16 +101,20 @@ def test_discovery_chain_order() -> None:
             path, source = discover_review_xlsx(root)
             assert path == config_target, "missing env target must fall through to config"
         finally:
-            if old is None:
+            if old_review is None:
                 os.environ.pop("TENDER_FINDER_REVIEW_XLSX", None)
             else:
-                os.environ["TENDER_FINDER_REVIEW_XLSX"] = old
+                os.environ["TENDER_FINDER_REVIEW_XLSX"] = old_review
+            if old_state is None:
+                os.environ.pop(STATE_ROOT_ENV_VAR, None)
+            else:
+                os.environ[STATE_ROOT_ENV_VAR] = old_state
 
 
 def main() -> int:
     tests = [
-        test_batch_launchers_share_the_same_discovery_chain,
-        test_gui_legacy_fallback_matches_batch_launchers,
+        test_batch_launchers_share_safe_package_local_default,
+        test_gui_uses_shared_isolated_discovery_helper,
         test_stale_patch54_snapshot_is_not_the_active_review_xlsx,
         test_discovery_chain_order,
     ]

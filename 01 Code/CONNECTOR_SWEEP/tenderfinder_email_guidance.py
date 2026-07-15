@@ -69,7 +69,7 @@ def email_setup_rows(state: EmailSetupState) -> list[list[str]]:
         ["1", "TENDER_FINDER Launcher", "Click Create / Open Email Import Folder. TENDER_FINDER creates the package-local inbox automatically and opens it for you.", "This removes guesswork about where .eml files should go in the runtime package.", "Local package folder", status],
         ["2", "Approved alert emails", "Save or copy approved .eml alert files into the opened inbox folder. Or click Select Existing Email Folder to use a OneDrive/local folder instead.", "Manual import is provider-neutral and does not require mailbox passwords or OAuth in this patch.", "Local or OneDrive folder", status],
         ["3", "TENDER_FINDER Launcher", "Click Test Email Import. This is dry-run only: it parses, counts, and logs results without moving or deleting your .eml files.", "You can confirm provider recognition, rejected reasons, duplicates, and civil/open rows before the demo run.", "Local package folder", status],
-        ["4", "TENDER_FINDER Launcher", "Click Run Demo With Email Alerts after the dry-run looks right.", "Open/actionable rows feed BID NOW; non-actionable rows stay in Tender_Signals_All with an honest filtered_reason.", "Local package folder", status],
+        ["4", "TENDER_FINDER Launcher", "Click Run With Email Alerts after the dry-run looks right.", "Open/actionable rows feed BID NOW; non-actionable rows stay in Tender_Signals_All with an honest filtered_reason.", "Local package folder", status],
         ["5", "bidsandtenders.ca", "Register as a vendor, follow Surrey, Maple Ridge, Township of Langley, City of Langley, Richmond, Pitt Meadows, and Fraser Health; enable civil email alerts. Verify exact category labels on the portal.", "Most Lower Mainland municipal live tenders sit behind this free vendor login; TENDER_FINDER reads alert emails instead of logging in.", "https://www.bidsandtenders.ca", status],
         ["6", "BC Bid", "Use public browse where possible; register as a supplier only to submit or enable notifications. Select civil/site-prep/water/sewer/road categories where available; verify exact labels on the portal.", "Provincial and public-body opportunities can arrive as no-login browse results or supplier notifications.", "https://www.bcbid.gov.bc.ca", status],
         ["7", "BidCentral", "Confirm membership tier and enable civil/construction alerts if included.", "Construction bid network alerts can feed BID NOW without portal scraping.", "https://www.bidcentral.ca", status],
@@ -111,7 +111,7 @@ WHERE TO REGISTER:
 WHAT HAPPENS IF YOU DO THIS:
   Alert emails start arriving in your inbox. In this patch, open TENDER_FINDER Launcher,
   click Create / Open Email Import Folder, save or copy approved .eml alerts
-  into that folder, click Test Email Import, then click Run Demo With Email
+  into that folder, click Test Email Import, then click Run With Email
   Alerts. TENDER_FINDER can fill BID NOW with real open tenders, closing dates,
   contacts, and links.
 

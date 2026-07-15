@@ -18,7 +18,11 @@ available only through the checked-in patch reports and historical documents.
 
 ## Setup
 
-Windows PowerShell:
+For normal use, double-click `Launch_TENDER_FINDER_GUI.bat`. If `.venv` is
+missing, the launcher runs the one-time setup and then opens the GUI. Later
+double-clicks open the GUI directly.
+
+Manual Windows PowerShell setup remains available:
 
 ```powershell
 py -m venv .venv
@@ -29,6 +33,22 @@ py -m venv .venv
 The repository-level `requirements.txt` includes all third-party packages
 found in runtime code and repository tests. `tkinter`, `email`, `urllib`, and
 the other unlisted imports are part of Python's standard library.
+
+## Weekly operator workflow
+
+1. Double-click `Launch_TENDER_FINDER_GUI.bat`.
+2. Click **Validate keywords** after every edit to `config\keywords.xlsx`.
+3. Click **Run Self-Test** and require `PASS` with zero failed checks. Self-Test
+   is strictly offline and writes an isolated manifest.
+4. Use **Offline/Test Run** for local inputs, or **Live Run** only when public-
+   source network access is intended.
+5. Review `Keyword_Change_Audit`, then work the user master. Manual
+   `Assigned To`, `Status`, `Notes`, and Weekly Review Log values are carried
+   forward by stable ID.
+
+All generated workbooks, logs, manifests, settings, and history are written
+beneath `C:\tenderfinder_out`. Normal runs do not write runtime state into the
+repository.
 
 ## Offline validation
 
@@ -47,8 +67,8 @@ Equivalent direct command after the environment is installed:
   --email-intake --no-fetch
 ```
 
-This mode does not fetch any external site. Outputs are written beneath
-`C:\tenderfinder_out`; package-local user state and history are ignored by Git.
+This mode does not fetch any external site. `verify_package.bat` invokes the
+same shared offline Self-Test used by the GUI.
 
 ## Project structure
 
@@ -65,11 +85,14 @@ buildmatch-tender-finder/
 |       |-- tenderfinder_demo_three_buckets.py
 |       |-- tenderfinder_email_intake.py
 |       |-- tenderfinder_launcher_gui.py
+|       |-- tenderfinder_engine.py       display-independent run service
+|       |-- tenderfinder_runtime.py      isolated runtime state/manifests
+|       |-- tenderfinder_self_test.py    shared offline acceptance runner
 |       |-- tenderfinder_live_link_checker.py
 |       |-- tenderfinder_master_io.py
 |       |-- tenderfinder_source_registry.py
 |       |-- tenderfinder_surrey_inprocess.py
-|       |-- tenderfinder_dev_app_endpoints.csv
+|       |-- tenderfinder_dev_app_endpoints.csv  legacy compatibility snapshot
 |       |-- data/                 source backlog data
 |       `-- tests/                offline tests and non-email fixtures
 |-- 02 Runbooks And Plans/
@@ -78,7 +101,7 @@ buildmatch-tender-finder/
 |-- 05_PROMPTS/
 |-- 06 QA/
 |-- demo_data/                    documentation only; `.eml` files excluded
-|-- config/                       company profile + editable keyword workbooks
+|-- config/                       editable keywords + canonical source registry
 |-- docs/                         current and historical reports
 |-- inputs/                       packaged synthetic review workbook
 |-- latest_verified_output/       packaged synthetic reference output
@@ -105,6 +128,9 @@ Windows launch scripts required by the portable workflow.
   specific filters, including configured Vancouver signal word lists.
 - `tenderfinder_demo_three_buckets.py` builds active/future/watch outputs and
   applies the configured tender/civil matching rules.
+- `tenderfinder_engine.py` owns preflight, run planning, subprocess execution,
+  manifests, source tests, and the shared Self-Test without GUI imports. It is
+  the seam for a future website integration.
 - `tenderfinder_agent2.py` is an older standalone scorer that optionally reads
   `ANTHROPIC_API_KEY` from the process environment. It is frozen legacy code:
   it keeps its own built-in keyword lists and does not read `keywords.xlsx`.
@@ -115,7 +141,7 @@ previously collected records. Stored review-workbook `fit_score` values are
 audit inputs only: the main pipeline recomputes current score, signal quality,
 and score-based routing before it builds any output. Records that no longer
 meet the Future Projects gate remain visible in the run log/build report and
-previously tracked Outreach rows keep their user-owned follow-up fields.
+the stable-ID `Keyword_Change_Audit`; user-owned follow-up fields are retained.
 
 Historical packaged values such as 74, 81, and 65 were snapshot-era scores
 copied by the old replay stage. They are intentionally superseded by the
@@ -130,9 +156,11 @@ current configuration.
 
 ## Configuring for your company
 
-1. Keep `config/keywords_template.xlsx` unchanged as the clean handoff copy.
-2. Copy it to `config/keywords.xlsx` and fill in `Company_Profile`: company
-   name, regions, preferred work types, and known clients (one value per row).
+1. Edit the live `config/keywords.xlsx`. Use
+   `config/keywords_template.xlsx` as a clean starter when onboarding another
+   company; both workbooks contain current Instructions.
+2. Fill in `Company_Profile`: company name, regions, preferred work types,
+   and known clients (one value per row).
 3. Optionally tune the `Keywords` sheet. Its dropdowns show the allowed match
    types, categories, and Y/N active state; the `Instructions` sheet includes
    worked examples. `exact` means trimmed, case-insensitive equality against
@@ -141,6 +169,10 @@ current configuration.
 4. In the launcher, click **Validate keywords**. A bad or missing workbook
    stops the run with a row-specific message; there is no hidden fallback.
 5. Run TENDER_FINDER normally after validation passes.
+
+Editable `regex` rules have bounded pattern length, bounded input length,
+unsafe-construct validation, and an execution timeout. A bad rule fails
+validation or the run; it cannot silently fall back to hardcoded keywords.
 
 Profile values create sensible defaults: regions become geography/+8 rules,
 work types become positive/+9 rules, and known clients become client/+6 rules.
@@ -152,6 +184,15 @@ The pre-filled live workbook reproduces the original Tybo behavior: base score
 known-client bonus, and the same 0-100 cap, civil gates, and Vancouver routing
 thresholds. Only the Vancouver word lists are editable; their thresholds stay
 in code.
+
+## Source registry
+
+`config/sources.csv` is the single runtime registry for both tender and
+development tracks. The GUI's **Source Checks** tab can add disabled drafts,
+edit, enable/disable, validate, test offline, and—with explicit confirmation—
+test exactly one selected public source live. Writes are atomic and an active
+row must be complete and supported. An unsupported website can remain a
+disabled `custom` draft until its parser adapter is implemented.
 
 ## Known issues
 
@@ -170,10 +211,6 @@ keys from environment variables or an ignored local env file. Runtime-created
 `.venv/`, `user_data/`, `demo_history/`, logs, email messages, databases, and
 ZIP archives are ignored.
 
-Live connector changes, BuildMatch/Neon integration, Git remotes, and publishing
-are outside the scope of this configuration change.
-
-comand in termainal:  
-git add .
-   git commit -m "Fix fixture leak in Outreach_Tracker + dashboard count mismatch"
-   git push
+BuildMatch/Neon synchronization is not implemented in this release. The
+desktop engine and its run manifests are deliberately separate from Tkinter,
+so a future site can call the engine without automating the GUI.

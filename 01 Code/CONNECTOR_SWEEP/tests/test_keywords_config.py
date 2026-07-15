@@ -217,8 +217,9 @@ def test_gui_helpers_are_headless_and_read_live_config() -> None:
     result = gui.validate_keywords_for_gui(PACKAGE_ROOT, force_reload=True)
     assert result["company_name"] == "Tybo Contracting"
     assert result["active_keyword_count"] == 227
-    assert result["rescore_semantics"].startswith("Scores, tiers, gates, and labels always reflect current keywords.xlsx")
-    assert "legacy tenderfinder_agent2.py is static" in result["rescore_exceptions"]
+    assert result["rescore_semantics"].startswith("Scores, gates, labels, and bucket routing always reflect current keywords.xlsx")
+    assert "legacy_vancouver_scoring_text_unavailable" in result["rescore_exceptions"]
+    assert "tenderfinder_agent2.py remains isolated/static" in result["rescore_exceptions"]
     assert gui.keywords_folder(PACKAGE_ROOT) == PACKAGE_ROOT / "config"
 
 

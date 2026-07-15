@@ -1,25 +1,28 @@
-"""Review-workbook discovery (product Task C).
+r"""Review-workbook discovery (product Task C).
 
 The Track A review workbook is external business data, so a handoff package
 must never hard-fail just because one absolute path from the build machine
 does not exist. Discovery order:
 
 1. TENDER_FINDER_REVIEW_XLSX environment variable
-2. tenderfinder_runtime_config.json in the package/repo root (key: "review_xlsx",
-   written by the GUI when the user browses to the workbook once)
+2. an isolated runtime setting below ``C:\tenderfinder_out\state`` (key:
+   ``review_xlsx``, written by the GUI after the user browses once)
 3. package-local inputs/all_live_review.xlsx
 4. legacy machine path (C:\\tenderfinder_out\\patch5_10_live\\all_live_review.xlsx on
    Windows, ~/tenderfinder_out/patch5_10_live/all_live_review.xlsx elsewhere)
 
-Pure stdlib, no pipeline imports - safe for the GUI (which deliberately
-never imports the demo builder) and for tests.
+An old package-root JSON file is read only as a migration bridge; new settings
+never write into the repository. Pure stdlib, no pipeline imports.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
+
+from tenderfinder_runtime import STATE_ROOT_ENV_VAR, default_output_root, runtime_paths
 
 CONFIG_FILENAME = "tenderfinder_runtime_config.json"
 PACKAGE_LOCAL_RELATIVE = Path("inputs") / "all_live_review.xlsx"
@@ -31,12 +34,27 @@ def legacy_review_xlsx_path() -> Path:
     return Path.home() / "tenderfinder_out" / "patch5_10_live" / "all_live_review.xlsx"
 
 
+def _legacy_config_path(root: Path) -> Path:
+    return Path(root) / CONFIG_FILENAME
+
+
 def config_path(root: Path) -> Path:
-    return root / CONFIG_FILENAME
+    """Per-package GUI settings outside the code repository."""
+    package_root = Path(root).expanduser().resolve()
+    namespace = hashlib.sha256(str(package_root).casefold().encode("utf-8")).hexdigest()[:12]
+    selected_state = os.environ.get(STATE_ROOT_ENV_VAR, "").strip() or str(default_output_root() / "state")
+    settings = runtime_paths(selected_state, mode="settings", package_root=package_root).settings
+    return settings / f"{package_root.name}_{namespace}" / CONFIG_FILENAME
 
 
 def load_runtime_config(root: Path) -> dict:
     path = config_path(root)
+    if not path.exists():
+        # Read-only migration bridge for snapshots that already stored this
+        # non-secret setting in the package root. New writes never go there.
+        legacy = _legacy_config_path(root)
+        if legacy.exists():
+            path = legacy
     if not path.exists():
         return {}
     try:
@@ -47,11 +65,11 @@ def load_runtime_config(root: Path) -> dict:
 
 
 def save_runtime_config(root: Path, updates: dict) -> Path:
-    """Merge updates into the package-local config. Never stores secrets -
-    only local file paths and preferences."""
+    """Merge non-secret local paths/preferences into isolated runtime state."""
     path = config_path(root)
     config = load_runtime_config(root)
     config.update(updates)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     return path
 

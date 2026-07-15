@@ -476,6 +476,24 @@ def score_civil_fit(text_blob, municipality="", match_fields=None):
     return score_civil_fit_breakdown(text_blob, municipality, match_fields)["fit_score"]
 
 
+def van_permit_fit_tier(values):
+    """Return the Vancouver permit tier from current workbook signal rules."""
+    config = load_keywords_config()
+    if isinstance(values, dict):
+        blob = " ".join(str(value) for value in values.values() if value)
+    else:
+        blob = str(values or "")
+    high = config.match_count("van_signal_primary", blob)
+    low = config.match_count("van_signal_secondary", blob)
+    if high >= 2 or (high >= 1 and low == 0):
+        return "strong"
+    if high >= 1:
+        return "watchlist"
+    if low >= 1:
+        return "noisy"
+    return "bulk"
+
+
 if __name__ == "__main__":
     # Tiny self-check so `python tenderfinder_guards.py` proves the gates fire.
     assert layer_is_denylisted("Subdivision Markers")

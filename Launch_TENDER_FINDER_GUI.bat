@@ -11,23 +11,24 @@ if not exist "%GUI_SCRIPT%" (
   exit /b 1
 )
 
-if exist "%PYW%" (
-  start "" "%PYW%" "%GUI_SCRIPT%"
-  exit /b 0
+if not exist "%PYW%" (
+  echo TENDER_FINDER first-run setup is preparing its private Python environment.
+  echo This happens once and may take several minutes.
+  call "%~dp0setup_tenderfinder_environment.bat"
+  if errorlevel 1 (
+    echo.
+    echo ERROR: TENDER_FINDER setup did not complete. Review the messages above.
+    pause
+    exit /b 1
+  )
 )
 
-where python >nul 2>&1
-if %errorlevel%==0 (
-  start "" pythonw "%GUI_SCRIPT%"
-  exit /b 0
+if not exist "%PYW%" (
+  echo ERROR: Setup finished without creating:
+  echo   "%PYW%"
+  pause
+  exit /b 1
 )
 
-where py >nul 2>&1
-if %errorlevel%==0 (
-  start "" pyw -3 "%GUI_SCRIPT%"
-  exit /b 0
-)
-
-echo ERROR: Python was not found. Run setup_venv.bat first.
-pause
-exit /b 1
+start "" "%PYW%" "%GUI_SCRIPT%"
+exit /b 0

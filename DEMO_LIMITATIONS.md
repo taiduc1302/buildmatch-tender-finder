@@ -3,15 +3,12 @@
 Read this alongside `TEST_RESULTS.md`. Nothing here is a defect — it's a
 scope statement so you know exactly what you're looking at.
 
-## 1. This is a starter prototype, not a production SaaS product
+## 1. This is a standalone desktop workflow, not a hosted SaaS product
 
-Tender Finder, as shipped in this package, is a set of Python scripts and
-batch launchers that produce an Excel workbook. There is no database, no
-multi-user access, no web UI, no authentication, and no hosting. It was
-extracted and sanitized from a working internal prototype so it could be kept,
-studied, demonstrated, and used as the foundation for something bigger — see
-`FUTURE_WEB_APP_PLAN.md` for that path. Treat it accordingly: a proof of
-concept with real, working logic underneath, not a finished product.
+Tender Finder is a double-clickable Windows GUI around a separate Python
+engine that produces Excel workbooks and run manifests. There is no database,
+multi-user access, hosted web UI, authentication, or hosting. The standalone
+weekly workflow is supported; a future web product remains a separate project.
 
 ## 2. The demo data is entirely synthetic
 
@@ -31,17 +28,14 @@ only output workbook shipped in this package
 (`latest_verified_output\demo_synthetic_sample\`) was generated *by this
 package* from the synthetic inputs above, specifically for this handoff.
 
-## 4. Some live connectors require configuration and have not been re-tested
+## 4. Live connectors remain dependent on public websites
 
-The coded connectors (Surrey, Vancouver, Maple Ridge, Township of Langley,
-Coquitlam, Abbotsford development-application feeds, ~20 procurement listing
-checks) point at real public endpoints and were working in the original
-project. **They have not been re-run from this sanitized package** — target
-sites may have changed their structure or access rules since. Expect to debug
-before relying on live fetching. Login-gated sources (bids&tenders vendor
-alerts, BC Bid notifications, BidCentral, MERX, SAP Ariba) are deliberately
-**not scraped** at all — they're placeholders for a registration + email-alert
-workflow, by design (the tool never stores portal credentials).
+The configured connectors point at real public endpoints, and those sites may
+change structure or access rules at any time. The 2026-07-14 release gate
+confirmed Surrey's public tender listing with one controlled request; that is
+evidence for that run, not a permanent availability guarantee. Login-gated
+sources are deliberately not scraped: use approved email alerts instead. The
+tool never stores portal credentials or bypasses CAPTCHA/browser checks.
 
 ## 5. Some source checks are public-source examples only
 
@@ -55,19 +49,17 @@ Adapt it for your own region.
 
 ## 6. The anti-fixture / anti-synthetic guards are intentionally strict
 
-The demo builder includes a production guard that refuses to treat rows
-tagged as fixture/synthetic/example as real output — see `TEST_RESULTS.md`
-§2a for exactly how it behaves on the shipped synthetic data (it correctly
-fails two sub-checks). This is deliberate and should not be loosened: it's the
-mechanism that would prevent a future real deployment from accidentally
-shipping test data as a client-facing report.
+The builder includes a shared production guard that refuses to treat rows
+tagged as fixture/synthetic/example as real user-facing output. The historical
+Outreach and Dashboard mismatches are fixed; the current offline Self-Test
+requires both checks to pass. The guard remains intentionally strict.
 
 ## 7. What this means for you
 
-- Want to **see how it works**: run `run_demo_synthetic.bat` — no setup beyond
-  Python, no credentials, no real data risk.
-- Want to **use it for real tender-finding**: budget time to (a) supply a real
-  review workbook, (b) re-verify/fix live connectors for your target sites,
-  (c) build your own source register for your region, (d) confirm the
-  anti-fixture guard passes cleanly on your real data.
+- Want to **see how it works safely**: double-click the GUI, run **Self-Test**,
+  then run **Offline/Test Run**. No credentials or public-source fetch is used.
+- Want to **use it for live tender-finding**: validate keywords, review the
+  enabled rows in `config/sources.csv`, test the selected sources, and then use
+  **Live Run**. Recheck any public connector that reports a changed/blocked
+  response.
 - Want to **build a product on top of it**: start with `FUTURE_WEB_APP_PLAN.md`.

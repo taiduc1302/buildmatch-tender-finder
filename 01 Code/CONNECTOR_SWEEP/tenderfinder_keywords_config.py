@@ -16,12 +16,17 @@ from typing import Any, Iterable
 
 from openpyxl import load_workbook
 
+try:
+    import regex as bounded_regex
+except ImportError:  # Reported as a configuration/dependency error below.
+    bounded_regex = None
+
 from tenderfinder_package_paths import (
     detect_package_root,
     keywords_config_path,
     keywords_template_path,
-    keywords_validation_report_path,
 )
+from tenderfinder_runtime import STATE_ROOT_ENV_VAR, default_output_root, runtime_paths
 
 
 CONFIG_ENV_VAR = "TENDER_FINDER_KEYWORDS_CONFIG"
@@ -69,6 +74,24 @@ PROFILE_RULE_DEFAULTS = {
     "known_clients": ("client", 6, "Company Profile known client"),
 }
 
+MAX_REGEX_PATTERN_LENGTH = 256
+MAX_REGEX_TEXT_LENGTH = 100_000
+REGEX_TIMEOUT_SECONDS = 0.02
+_REGEX_STRESS_TEXTS = (
+    "a" * 4096 + "!",
+    "0" * 4096 + "X",
+    "word " * 2048 + "!",
+)
+_UNSAFE_REGEX_CHECKS = (
+    (re.compile(r"\\[1-9]|\(\?P="), "backreferences are not allowed"),
+    (re.compile(r"\(\?(?:[=!]|<[=!])"), "lookaround assertions are not allowed"),
+    (re.compile(r"\(\?\("), "conditional groups are not allowed"),
+    (
+        re.compile(r"\((?:\\.|[^()])*(?:\*|\+)(?:\\.|[^()])*\)(?:\*|\+|\{\d*,\})"),
+        "nested unbounded quantifiers are not allowed",
+    ),
+)
+
 
 class KeywordConfigError(RuntimeError):
     """Raised when the live workbook cannot safely control scoring."""
@@ -86,6 +109,10 @@ class KeywordConfigError(RuntimeError):
             f"to {self.path} as keywords.xlsx, then fill in Company_Profile.\n"
             f"{details}"
         )
+
+
+class KeywordRegexRuntimeError(RuntimeError):
+    """Raised when a validated workbook regex exceeds its runtime budget."""
 
 
 @dataclass(frozen=True)
@@ -112,7 +139,24 @@ class KeywordRule:
             return value.strip().lower() == self.keyword.strip().lower()
         if self.match_type == "regex":
             # Historical tender regexes searched already-lowercased text.
-            return re.search(self.keyword, value.lower()) is not None
+            if bounded_regex is None:
+                raise KeywordRegexRuntimeError(
+                    "The required 'regex' package is unavailable. Run setup_venv.bat, "
+                    "then validate keywords.xlsx again."
+                )
+            bounded_value = value.lower()[:MAX_REGEX_TEXT_LENGTH]
+            try:
+                return bounded_regex.search(
+                    self.keyword,
+                    bounded_value,
+                    timeout=REGEX_TIMEOUT_SECONDS,
+                ) is not None
+            except TimeoutError as exc:
+                location = f" row {self.row_number}" if self.row_number else ""
+                raise KeywordRegexRuntimeError(
+                    f"Keyword regex{location} exceeded the {REGEX_TIMEOUT_SECONDS:.2f}s "
+                    "safety limit. Simplify or disable the rule before rerunning."
+                ) from exc
         return self.keyword.lower() in value.lower()
 
 
@@ -222,10 +266,48 @@ def _parse_weight(value: Any, category: str, row_number: int, errors: list[str])
     return int(number)
 
 
+def _validate_regex(keyword: str, row_number: int, errors: list[str]) -> None:
+    prefix = f"Sheet {KEYWORDS_SHEET} row {row_number}:"
+    if len(keyword) > MAX_REGEX_PATTERN_LENGTH:
+        errors.append(
+            f"{prefix} regex is {len(keyword)} characters; maximum is "
+            f"{MAX_REGEX_PATTERN_LENGTH}"
+        )
+        return
+    for check, message in _UNSAFE_REGEX_CHECKS:
+        if check.search(keyword):
+            errors.append(f"{prefix} unsafe regex: {message}")
+            return
+    if bounded_regex is None:
+        errors.append(
+            f"{prefix} regex rules require the 'regex' package. Run setup_venv.bat."
+        )
+        return
+    try:
+        compiled = bounded_regex.compile(keyword)
+    except Exception as exc:
+        errors.append(f"{prefix} invalid regex '{keyword}': {exc}")
+        return
+    try:
+        for sample in _REGEX_STRESS_TEXTS:
+            compiled.search(sample, timeout=REGEX_TIMEOUT_SECONDS)
+    except TimeoutError:
+        errors.append(
+            f"{prefix} unsafe regex exceeded the {REGEX_TIMEOUT_SECONDS:.2f}s "
+            "validation safety limit"
+        )
+
+
 def _validation_report_path(path: Path) -> Path:
-    default_path = keywords_config_path(detect_package_root(path.parent)).resolve()
+    package_root = detect_package_root(path.parent)
+    default_path = keywords_config_path(package_root).resolve()
     if path.resolve() == default_path:
-        return keywords_validation_report_path(detect_package_root(path.parent))
+        selected_state = os.environ.get(STATE_ROOT_ENV_VAR, "").strip() or str(default_output_root() / "state")
+        return runtime_paths(
+            selected_state,
+            mode=os.environ.get("TENDER_FINDER_RUN_MODE", "config"),
+            package_root=package_root,
+        ).settings / "keywords_validation_last.txt"
     return path.parent / "keywords_validation_last.txt"
 
 
@@ -341,10 +423,7 @@ def _load_uncached(path: Path, *, allow_empty_profile: bool = False) -> KeywordC
             errors.append(f"Sheet {KEYWORDS_SHEET} row {row_number}: active must be Y or N")
         weight = _parse_weight(record["weight"], category, row_number, errors)
         if match_type == "regex" and keyword:
-            try:
-                re.compile(keyword)
-            except re.error as exc:
-                errors.append(f"Sheet {KEYWORDS_SHEET} row {row_number}: invalid regex '{keyword}': {exc}")
+            _validate_regex(keyword, row_number, errors)
         if category == "gate_collision" and not param:
             errors.append(f"Sheet {KEYWORDS_SHEET} row {row_number}: gate_collision requires collision terms in param")
         if category == "gate_exclude" and param not in {"absolute_title", "negative_title"}:
