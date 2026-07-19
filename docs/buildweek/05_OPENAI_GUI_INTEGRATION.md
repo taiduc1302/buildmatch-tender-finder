@@ -18,9 +18,14 @@ configurable and no model is claimed to be available without a real smoke test
 
 ## User workflow
 
-1. Select a ranked opportunity (the GUI analyzes the top-ranked record of the
-   active dataset under the selected preset).
-2. Click **Analyze Selected Opportunity with AI**.
+1. Open the **Ranked Opportunities** tab, load the ranked list (scored under
+   the selected preset), and select a specific row in the table — the tool
+   never silently substitutes a different opportunity for the one the user
+   selected. A separate, explicitly-labelled **Analyze Top-Ranked Opportunity**
+   button remains available as a convenience shortcut when no manual selection
+   is needed.
+2. Click **Analyze Selected Opportunity with AI** (disabled until a row is
+   selected).
 3. The GUI shows the existing deterministic evidence (fit score, routing bucket,
    matched positive/negative terms) **separately** from the AI's advisory output.
 4. Only approved public record fields + the selected contractor profile are sent.
