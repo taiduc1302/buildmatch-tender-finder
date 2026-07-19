@@ -15,6 +15,8 @@ calls against real public sources, real test runs), not by inspection alone.
 | 8 | `openai` SDK was never declared in either `requirements.txt`, so a normal install would not provide it | P1 (a Windows user following the documented setup would be missing the dependency the AI feature needs) | Checking `requirements.txt` while investigating the missing-key blocker | Added `openai>=1.50` to both `requirements.txt` files with a comment explaining when it's needed | N/A (dependency declaration; verified importable after `pip install`) |
 | 9 | `windows_acceptance.ps1` printed "ALL AUTOMATED CHECKS PASSED" even if an earlier step (offline CI check, Self-Test, package audit, release build/verify) failed, because `$ErrorActionPreference = "Stop"` does not catch a non-zero exit code from an external process | P1 (a false-positive acceptance script is worse than no script) | Line-by-line PowerShell review | Rewrote with an `Invoke-Step` helper that checks `$LASTEXITCODE` after every step and aborts on the first real failure | Manual review only (no `pwsh` available in this environment to execute it — see `02_WINDOWS_ACCEPTANCE_RESULTS.md`) |
 | 10 | Public Snapshot demo carried only 8 fictitious records | P2 (spec explicitly wanted 50-200 representative records once a live sweep succeeded) | Task requirement, enabled by items 1/4/6 succeeding | Regenerated with 82 real, sanitized public records from the controlled live sweep (5 municipalities, all 3 buckets, 6 sources) | `test_buildweek_snapshot.py` (6 tests) re-verified against the new data |
+| 11 | Two new formula-injection regression tests (and, on inspection, the equivalent PRODUCTION code paths `_read_records_for_scoring` and `_read_dataset_records`, which run on every real refresh/ranked-opportunities load) left an `openpyxl` `read_only` workbook file handle open; Windows (unlike POSIX) refuses to delete a file while a handle to it is still open, causing a genuine `PermissionError: [WinError 32]` and failing the pushed Windows CI run | P0 (a real, reproduced CI failure on real Windows — not hypothetical) | **Real Windows CI run** (`windows-latest`, Python 3.12) — the exact kind of defect that cannot be found on Linux/POSIX | All four `openpyxl.load_workbook(..., read_only=True)` call sites (2 production, 2 test) now close the workbook in a `finally` block | Re-ran the same tests + a fresh Windows CI push; both green |
+| 12 | `ranked_opportunities()` (GUI) and `default_scorer()` (refresh service) both temporarily mutate the process-global `TENDER_FINDER_KEYWORDS_CONFIG` env var from background GUI threads with no coordination — a plausible race (e.g. Refresh Development Data and Load Ranked Opportunities triggered moments apart) could silently score under the wrong preset | P2 (correctness under a specific concurrent-click sequence; no crash, no data loss, self-corrects on the next re-score) | Adversarial concurrency review while investigating item 11 | Added a shared `threading.Lock` (`tenderfinder_keywords_config.KEYWORDS_ENV_OVERRIDE_LOCK`) around both env-var-swap blocks | Full suite re-run green; no dedicated concurrency test added (would require injecting artificial thread-timing, judged not worth the complexity for a P2) |
 
 ## Unresolved (genuine external blockers, not defects)
 
@@ -26,6 +28,8 @@ calls against real public sources, real test runs), not by inspection alone.
 
 ## Final state after remediation
 
-Full offline pytest: 216 passed, 8 skipped, 0 failed, 0 errors. Authoritative
-offline Self-Test: 198 passed, 0 failed, 0 not-tested-fixture. Package audit:
-PASS. Clean release build + verify: PASS.
+Full offline pytest: 216 passed, 8 skipped, 0 failed, 0 errors (Linux).
+Authoritative offline Self-Test: 199 passed, 0 failed, 0 not-tested-fixture
+(Linux). Package audit: PASS. Clean release build + verify: PASS. **Remote
+Windows CI (`windows-latest`, Python 3.12, real tkinter): PASS** — see
+`07_REMOTE_PR_AUDIT.md`.

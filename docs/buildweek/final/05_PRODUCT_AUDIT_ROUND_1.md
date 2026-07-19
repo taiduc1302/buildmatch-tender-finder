@@ -9,7 +9,7 @@ IMPLEMENTED BUT NOT TESTED / PARTIALLY IMPLEMENTED / BROKEN / UNKNOWN.
 
 | Question | Classification | Evidence |
 |---|---|---|
-| Does the GUI run? | VERIFIED WITH LIMITATIONS | Windows CI (`windows-latest`, real tkinter) passed on the pre-Gap-A/B code; this session's new widgets are statically consistent but pending a fresh CI run (interactive rendering itself is not verifiable in this Linux environment) |
+| Does the GUI run? | VERIFIED WITH LIMITATIONS | Windows CI (`windows-latest`, real tkinter) constructs the full app including the new Ranked Opportunities Treeview and passed after fixing a real Windows-only workbook-handle bug that first CI run caught (see `06_REMEDIATION_LOG.md` item 11); interactive visual rendering itself remains unverifiable without a human at a real desktop |
 | Does full refresh work? | VERIFIED OPERATIONAL | Real controlled sweep: 8/8 sources, 1,209-1,439 records across 3 runs |
 | Does it retrieve full records? | VERIFIED OPERATIONAL | Real pagination confirmed (`[arcgis] batch=1 offset=0 fetched=200`), 1,209 normalized records, not a preview |
 | Does scoring run automatically? | VERIFIED OPERATIONAL (fixed this session — was previously not wired) | Run 3: 104/531/574 bucket counts from real data |

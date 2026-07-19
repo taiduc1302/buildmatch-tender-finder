@@ -28,8 +28,13 @@ Everything else the task required is done and verified:
 * Self-Test now genuinely covers all 6 Build Week test suites (was silently
   not exercising any of them before this session).
 * Mandatory automated gates: full pytest 216 passed / 8 skipped / 0 failed;
-  Self-Test 198 passed / 0 failed; package audit PASS; clean release build +
+  Self-Test 199 passed / 0 failed; package audit PASS; clean release build +
   verify PASS.
+* **Remote Windows CI is genuinely green** — the pushed branch's "Offline
+  verification (Windows, Python 3.12)" check failed once for real (a Windows-
+  only workbook-handle bug this environment could not have caught), was fixed,
+  and now passes on real Windows with real tkinter, constructing the full GUI
+  including the new Ranked Opportunities table. See `07_REMOTE_PR_AUDIT.md`.
 
 ## Do not use `COMPLETE_AND_VERIFIED`
 

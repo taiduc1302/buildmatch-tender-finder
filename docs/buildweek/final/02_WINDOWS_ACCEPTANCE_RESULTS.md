@@ -46,17 +46,21 @@ in this one.
    `01_FULL_RAW_SWEEP_IMPLEMENTATION.md`). This proves the underlying checks
    are sound; only the PowerShell *wrapper*'s execution on real Windows
    remains unverified.
-6. **Confirmed the new GUI widgets (data-mode banner, preset selector,
-   Refresh Development Data, Ranked Opportunities `ttk.Treeview`, Analyze
-   Selected/Top-Ranked buttons) are statically consistent** — every new
-   `self.<attr>` is created exactly once and every `command=` callback resolves
-   to a defined method (grep-verified). The repository's "Offline verification
-   (Windows, Python 3.12)" GitHub Actions check (`windows-latest` runner, real
-   tkinter — its Self-Test step constructs the full `TenderFinderLauncherApp`)
-   already passed once on this branch, but that run predates this session's
-   Ranked Opportunities tab and its Treeview/selection widgets. Those specific
-   additions are pending a fresh CI run after this session's changes are
-   pushed — see `07_REMOTE_PR_AUDIT.md` for the post-push result.
+6. **Confirmed the new GUI widgets construct correctly on real Windows.**
+   After pushing this session's changes, the "Offline verification (Windows,
+   Python 3.12)" GitHub Actions check (`windows-latest` runner, real tkinter)
+   ran the Self-Test, which constructs the full `TenderFinderLauncherApp`
+   including the new data-mode banner, preset selector, Refresh Development
+   Data button, and the new Ranked Opportunities tab's `ttk.Treeview` and
+   selection widgets. **First attempt genuinely failed** —
+   `PermissionError: [WinError 32]` during `tempfile.TemporaryDirectory`
+   cleanup, caused by two new formula-injection regression tests (and, found
+   on inspection, two production code paths) leaving an `openpyxl`
+   `read_only` workbook handle open, which Windows (unlike POSIX) refuses to
+   delete out from under. Fixed by explicitly closing every such handle; the
+   corrected push's CI run passed. This is exactly the kind of defect only a
+   real Windows run catches — see `06_REMEDIATION_LOG.md` item 11 and
+   `07_REMOTE_PR_AUDIT.md` for the verified-green result.
 
 ## What remains genuinely unverified (requires an actual Windows desktop)
 
