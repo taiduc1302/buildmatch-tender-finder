@@ -12,6 +12,37 @@ implemented separately from Tkinter in
 can call the engine without automating the desktop GUI. That integration does
 not exist yet.
 
+## BuildMatch Tender Finder — AI Opportunity Copilot (Build Week)
+
+The Run tab adds a contractor-profile-driven copilot workflow:
+
+`Contractor profile → public opportunities → deterministic filtering & scoring →
+ranked results → OpenAI analysis of a selected opportunity → evidence-based
+recommendation → estimator review/export`
+
+- A **persistent data-mode banner** always states the origin and age of the
+  loaded data (synthetic / public snapshot / live / cached-live / mixed / unknown).
+- **Contractor profiles** — Civil Contractor, Multi-Family Residential Builder,
+  General Contractor — selectable in the GUI; the residential/general profiles do
+  not penalize interior/mechanical/electrical/HVAC/suite scope.
+- **Refresh Development Data** pulls approved public development-application
+  records without command-line work, scores them, promotes them as the active
+  dataset, and shows truthful current-run statistics. A failed refresh keeps the
+  last known-good data and labels it cached/stale.
+- **Analyze Selected Opportunity with AI** runs an OpenAI (Responses API) analysis
+  with strict structured output, shown separately from — and never overriding —
+  the deterministic fit score and routing bucket. Set `OPENAI_API_KEY` (and
+  optionally `OPENAI_MODEL`); without a key, deterministic features still work.
+- A stable, offline **Public Snapshot** demo (`demo_data/public_snapshot`) powers
+  the three-minute presentation.
+
+Details are in `docs/buildweek/` (architecture, live refresh & rollback, data
+modes & metrics, presets, OpenAI integration, test results, demo script, Windows
+acceptance, known limitations, change index). AI output is advisory and
+evidence-referenced; it does not determine eligibility or replace estimator
+judgment. There is no hosted SaaS, 24/7 harvesting, or native HeavyBid/Bluebeam
+integration.
+
 ## Requirements and first launch
 
 - Windows 10 or 11.
