@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "public_snapshot_2026_07_19",
+  "data_mode": "PUBLIC_SNAPSHOT",
+  "capture_timestamp": "2026-07-19T09:00:00-07:00",
+  "dataset_file": "development_snapshot.csv",
+  "content_hash": "a4048330c37b69b50800a431bea8acc902515eb0df8794bc964ec90627eaf8fe",
+  "record_count": 8,
+  "sanitization": "Fictitious-but-realistic public development-application records. No secrets, internal notes, local paths, or unnecessary personal data. Applicant names are invented.",
+  "source_provenance": [
+    {
+      "source_id": "surrey_devapps_v2",
+      "name": "City of Surrey Development Applications",
+      "public_url": "https://data.surrey.ca/"
+    },
+    {
+      "source_id": "maple_ridge_devapps",
+      "name": "Maple Ridge Development Applications",
+      "public_url": "https://www.mapleridge.ca/"
+    },
+    {
+      "source_id": "twp_langley_devactivity",
+      "name": "Township of Langley Development Activity",
+      "public_url": "https://www.tol.ca/"
+    }
+  ],
+  "acceptance": {
+    "preset_id": "civil_contractor",
+    "min_records_fit_ge_60": 4,
+    "per_record": {
+      "SNAP-001": {
+        "min_fit": 80,
+        "max_fit": 100,
+        "tier": "HIGH"
+      },
+      "SNAP-002": {
+        "min_fit": 80,
+        "max_fit": 100,
+        "tier": "HIGH"
+      },
+      "SNAP-003": {
+        "min_fit": 80,
+        "max_fit": 100,
+        "tier": "HIGH"
+      },
+      "SNAP-004": {
+        "min_fit": 55,
+        "max_fit": 100,
+        "tier": "MEDIUM"
+      },
+      "SNAP-005": {
+        "min_fit": 70,
+        "max_fit": 100,
+        "tier": "HIGH"
+      },
+      "SNAP-006": {
+        "min_fit": 0,
+        "max_fit": 20,
+        "tier": "LOW"
+      },
+      "SNAP-007": {
+        "min_fit": 80,
+        "max_fit": 100,
+        "tier": "HIGH"
+      },
+      "SNAP-008": {
+        "min_fit": 0,
+        "max_fit": 40,
+        "tier": "LOW"
+      }
+    }
+  }
+}

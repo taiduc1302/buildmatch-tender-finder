@@ -220,6 +220,38 @@ def _default_dataset_writer(records: list[dict[str, Any]], dest: Path) -> Path:
     return dest
 
 
+def default_development_acquirer(
+    source: dict[str, Any], *, package_root: str | Path | None = None
+) -> SourceFetch:
+    """Safe, bounded LIVE acquirer used by the GUI's Refresh button.
+
+    Uses the engine's guarded single-source live test, which enforces the URL
+    safety and readiness rules and persists per-source health. It returns a
+    bounded normalized sample (never login/blocked sources). This performs
+    network I/O, so it is exercised only in live mode / the controlled live
+    proof, never in the offline test suite (the orchestration is tested with
+    injected fakes instead).
+    """
+    from tenderfinder_engine import test_source_definition
+
+    source_id = source["source_id"]
+    try:
+        result = test_source_definition(
+            source_id, root=package_root, allow_network=True, persist_result=True
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure = a failed source
+        return SourceFetch(source_id=source_id, ok=False, error=str(exc))
+    records = tuple(result.get("normalized_preview", []) or ())
+    ok = bool(result.get("passed")) and bool(records)
+    return SourceFetch(
+        source_id=source_id,
+        ok=ok,
+        records=records,
+        error="; ".join(str(e) for e in (result.get("errors") or [])),
+        http_status=int(result.get("http_status", 0) or 0),
+    )
+
+
 def _empty_metrics(request: RefreshRequest, run_id: str, started: str) -> dm.RunMetrics:
     return dm.RunMetrics(
         run_id=run_id, run_started=started,
