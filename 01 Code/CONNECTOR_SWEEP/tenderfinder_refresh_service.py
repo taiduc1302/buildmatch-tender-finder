@@ -71,6 +71,11 @@ class RefreshRequest:
     state_root: str | Path | None = None
     package_root: str | Path | None = None
     run_id: str = ""
+    # Safe per-source cap for the FULL sweep acquirer (not a preview limit —
+    # this is real paginated collection up to this many records per source).
+    # 0 means "use the source's own default" (tenderfinder_raw_sweep's CLI
+    # default of 20000, effectively unbounded for any real municipal feed).
+    max_records_per_source: int = 2000
 
 
 @dataclass
@@ -220,17 +225,19 @@ def _default_dataset_writer(records: list[dict[str, Any]], dest: Path) -> Path:
     return dest
 
 
-def default_development_acquirer(
+def diagnostic_preview_acquirer(
     source: dict[str, Any], *, package_root: str | Path | None = None
 ) -> SourceFetch:
-    """Safe, bounded LIVE acquirer used by the GUI's Refresh button.
+    """Bounded diagnostic-preview acquirer — source-health/validation use only.
 
-    Uses the engine's guarded single-source live test, which enforces the URL
-    safety and readiness rules and persists per-source health. It returns a
-    bounded normalized sample (never login/blocked sources). This performs
-    network I/O, so it is exercised only in live mode / the controlled live
-    proof, never in the offline test suite (the orchestration is tested with
-    injected fakes instead).
+    Uses the engine's guarded single-source live test, which enforces URL
+    safety and readiness rules and persists per-source health, returning only a
+    small bounded normalized sample (``normalized_preview``, typically ~5
+    records). This is intentionally NOT the acquirer used by "Refresh
+    Development Data" — a bounded preview must never power the production
+    dataset. Use it for source-health checks / diagnostics /
+    "Test Source (live)" only. See ``full_sweep_development_acquirer`` for the
+    real production acquirer.
     """
     from tenderfinder_engine import test_source_definition
 
@@ -250,6 +257,117 @@ def default_development_acquirer(
         error="; ".join(str(e) for e in (result.get("errors") or [])),
         http_status=int(result.get("http_status", 0) or 0),
     )
+
+
+# Backwards-compatible alias for the old name (kept only for anything still
+# importing it directly); new code should call diagnostic_preview_acquirer or
+# full_sweep_development_acquirer explicitly by name.
+default_development_acquirer = diagnostic_preview_acquirer
+
+
+def _lead_to_record(source_id: str, source_name: str, lead: dict[str, Any]) -> dict[str, Any]:
+    """Map one tenderfinder_raw_sweep normalized lead into a refresh-service record."""
+    return {
+        "source": source_id,
+        "source_name": source_name,
+        "lead_id": lead.get("project_id", ""),
+        "app_no": lead.get("app_no", ""),
+        "municipality": lead.get("municipality", ""),
+        "address": lead.get("address", ""),
+        "applicant_name": lead.get("owner", ""),
+        "app_type_stage": lead.get("app_type_stage", ""),
+        "scope_summary": lead.get("scope_summary", ""),
+        "status_class": lead.get("proposed_route", ""),
+        "source_url": lead.get("source_url", "") or lead.get("evidence_url", ""),
+        "fit_score": lead.get("fit_score", ""),
+        "date_found": lead.get("date_found", ""),
+        "raw_hash": lead.get("raw_hash", ""),
+        "dedupe_key": lead.get("dedupe_key", ""),
+    }
+
+
+# Statuses run_connector returns that mean "did not actually attempt a live
+# fetch" (config/access gating, not a fetch failure) — never reported as ok.
+_NON_FETCH_STATUSES = frozenset(
+    {
+        "skipped_source_status", "p3_extract_required", "access_test_required",
+        "paid_or_login_skip", "disabled_wrong_layer", "needs_exact_url",
+        "offline_no_fixture",
+    }
+)
+
+
+def full_sweep_development_acquirer(
+    source: dict[str, Any],
+    *,
+    max_records: int = 0,
+    raw_dir: str | Path | None = None,
+    package_root: str | Path | None = None,
+) -> SourceFetch:
+    """Real, unbounded (up to ``max_records``) full-sweep LIVE acquirer.
+
+    This is the production acquirer for "Refresh Development Data". It calls
+    ``tenderfinder_raw_sweep.run_connector`` directly — the same
+    fully-paginated (ArcGIS/ODS batch queries with retry/backoff, continuing
+    until the source is exhausted or ``max_records`` is reached), GUI-independent
+    function used by the ``--review-only`` CLI sweep. It is NOT a bounded
+    connector-test preview: every eligible lead the source returns (up to the
+    cap) is collected, not a fixed small sample.
+
+    Performs real network I/O against the source's public endpoint, so it is
+    exercised only in live mode / the controlled live proof — never in the
+    offline test suite (the orchestration around this acquirer is tested with
+    injected fakes instead).
+    """
+    import tenderfinder_raw_sweep as raw_sweep
+
+    source_id = source.get("source_id", "")
+    source_name = source.get("name", "")
+    conn = dict(source)
+    conn.setdefault("runtime_skip_reason", source_skip_reason(source))
+    cap = max_records if max_records > 0 else 20000  # tenderfinder_raw_sweep's own CLI default
+
+    try:
+        result = raw_sweep.run_connector(
+            conn, cap, probe=False, raw_dir=str(raw_dir) if raw_dir else None,
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure = a failed source
+        return SourceFetch(source_id=source_id, ok=False, error=str(exc))
+
+    status = str(result.get("status") or "")
+    error = str(result.get("error") or "")
+    leads = result.get("leads") or []
+    records = tuple(_lead_to_record(source_id, source_name, lead) for lead in leads)
+    ok = status not in _NON_FETCH_STATUSES and not error
+
+    return SourceFetch(
+        source_id=source_id,
+        ok=ok,
+        records=records,
+        error=error or ("" if ok else f"non-fetch status: {status}"),
+        http_status=int(result.get("http_status", 0) or 0),
+    )
+
+
+def make_full_sweep_acquirer(
+    request: RefreshRequest, *, package_root: Path, run_id: str
+) -> Callable[[dict[str, Any]], SourceFetch]:
+    """Build a ready-to-call full-sweep acquirer bound to this request's raw-dir
+    and per-source cap. This is what the GUI and CLI pass to
+    ``refresh_development_data`` for a real production refresh."""
+    raw_dir = dm.datasets_root(
+        state_root=request.state_root, package_root=package_root, create=True
+    ) / "raw" / run_id
+
+    def _acquire(source: dict[str, Any]) -> SourceFetch:
+        return full_sweep_development_acquirer(
+            source,
+            max_records=request.max_records_per_source,
+            raw_dir=raw_dir,
+            package_root=package_root,
+        )
+
+    return _acquire
 
 
 def _empty_metrics(request: RefreshRequest, run_id: str, started: str) -> dm.RunMetrics:

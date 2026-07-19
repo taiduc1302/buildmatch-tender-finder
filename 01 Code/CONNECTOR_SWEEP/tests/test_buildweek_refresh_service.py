@@ -175,6 +175,181 @@ def test_never_writes_inside_package() -> None:
         assert str(REPO_ROOT.resolve()) not in str(dataset_path)
 
 
+# --------------------------------------------------------------------------- #
+# Full-sweep acquirer (Gap A fix): must NOT be the bounded connector preview.
+# tenderfinder_raw_sweep.run_connector is monkeypatched so these tests remain
+# fully offline/deterministic — no real network I/O in the mandatory suite.
+# --------------------------------------------------------------------------- #
+
+
+def _fake_lead(project_id="P1", municipality="Surrey", app_no="A1", address="1 Main St",
+               owner="Acme Developer", app_type_stage="Development Permit",
+               scope_summary="Watermain and sanitary sewer servicing", fit_score=82,
+               source_url="https://example.com/p1", proposed_route="Future_Projects"):
+    return {
+        "project_id": project_id, "municipality": municipality, "app_no": app_no,
+        "address": address, "owner": owner, "app_type_stage": app_type_stage,
+        "scope_summary": scope_summary, "fit_score": fit_score, "source_url": source_url,
+        "proposed_route": proposed_route, "date_found": "2026-07-19", "raw_hash": "abc123",
+        "dedupe_key": f"{app_no}|{address}",
+    }
+
+
+def _source_row(source_id="maple_ridge_devapps"):
+    rows = rs.eligible_development_sources(package_root=REPO_ROOT, source_ids=(source_id,))
+    assert rows, f"{source_id} must be a runtime-eligible fixture for this test"
+    return rows[0]
+
+
+def test_full_sweep_acquirer_maps_many_leads_not_a_bounded_preview() -> None:
+    import tenderfinder_raw_sweep as raw_sweep
+
+    many_leads = [_fake_lead(project_id=f"P{i}", app_no=f"A{i}", address=f"{i} Main St")
+                  for i in range(37)]  # far more than a ~5-record preview
+    original = raw_sweep.run_connector
+
+    def fake_run_connector(conn, max_records, probe=False, raw_dir=None, **kwargs):
+        assert probe is False
+        return {"status": "load_ok", "error": "", "leads": many_leads[:max_records],
+                "records_pulled": len(many_leads), "http_status": 200}
+
+    raw_sweep.run_connector = fake_run_connector
+    try:
+        fetch = rs.full_sweep_development_acquirer(_source_row(), max_records=500)
+    finally:
+        raw_sweep.run_connector = original
+
+    assert fetch.ok
+    assert fetch.count == 37  # NOT bounded to a small preview sample
+    assert fetch.records[0]["scope_summary"] == "Watermain and sanitary sewer servicing"
+    assert fetch.records[0]["app_no"] == "A0"
+
+
+def test_full_sweep_acquirer_respects_max_records_cap() -> None:
+    import tenderfinder_raw_sweep as raw_sweep
+
+    captured = {}
+    original = raw_sweep.run_connector
+
+    def fake_run_connector(conn, max_records, probe=False, raw_dir=None, **kwargs):
+        captured["max_records"] = max_records
+        return {"status": "load_ok", "error": "", "leads": [], "http_status": 200}
+
+    raw_sweep.run_connector = fake_run_connector
+    try:
+        rs.full_sweep_development_acquirer(_source_row(), max_records=250)
+    finally:
+        raw_sweep.run_connector = original
+    assert captured["max_records"] == 250
+
+
+def test_full_sweep_acquirer_non_fetch_status_is_not_ok() -> None:
+    import tenderfinder_raw_sweep as raw_sweep
+
+    original = raw_sweep.run_connector
+    raw_sweep.run_connector = lambda conn, max_records, probe=False, raw_dir=None, **kw: {
+        "status": "access_test_required", "error": "", "leads": [], "http_status": 0,
+    }
+    try:
+        fetch = rs.full_sweep_development_acquirer(_source_row(), max_records=100)
+    finally:
+        raw_sweep.run_connector = original
+    assert not fetch.ok
+    assert "access_test_required" in fetch.error
+
+
+def test_full_sweep_acquirer_error_is_not_ok() -> None:
+    import tenderfinder_raw_sweep as raw_sweep
+
+    original = raw_sweep.run_connector
+    raw_sweep.run_connector = lambda conn, max_records, probe=False, raw_dir=None, **kw: {
+        "status": "load_error", "error": "504 Gateway Timeout", "leads": [], "http_status": 504,
+    }
+    try:
+        fetch = rs.full_sweep_development_acquirer(_source_row(), max_records=100)
+    finally:
+        raw_sweep.run_connector = original
+    assert not fetch.ok
+    assert "504" in fetch.error
+
+
+def test_full_sweep_acquirer_exception_is_a_failed_source_not_a_crash() -> None:
+    import tenderfinder_raw_sweep as raw_sweep
+
+    original = raw_sweep.run_connector
+
+    def boom(*a, **k):
+        raise RuntimeError("network unreachable")
+
+    raw_sweep.run_connector = boom
+    try:
+        fetch = rs.full_sweep_development_acquirer(_source_row(), max_records=100)
+    finally:
+        raw_sweep.run_connector = original
+    assert not fetch.ok
+    assert "network unreachable" in fetch.error
+
+
+def test_make_full_sweep_acquirer_binds_raw_dir_outside_package() -> None:
+    import tenderfinder_raw_sweep as raw_sweep
+
+    captured = {}
+    original = raw_sweep.run_connector
+    raw_sweep.run_connector = lambda conn, max_records, probe=False, raw_dir=None, **kw: (
+        captured.__setitem__("raw_dir", raw_dir) or
+        {"status": "load_ok", "error": "", "leads": [], "http_status": 200}
+    )
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state"
+            request = rs.RefreshRequest(state_root=state, package_root=REPO_ROOT, run_id="run123")
+            acquirer = rs.make_full_sweep_acquirer(request, package_root=REPO_ROOT, run_id="run123")
+            acquirer(_source_row())
+    finally:
+        raw_sweep.run_connector = original
+    assert captured["raw_dir"] is not None
+    assert str(REPO_ROOT.resolve()) not in str(captured["raw_dir"])
+    assert "run123" in str(captured["raw_dir"])
+
+
+def test_full_sweep_flow_promotes_dataset_with_many_records() -> None:
+    """End-to-end: full-sweep acquirer feeding the whole promote/score pipeline
+    with a realistically large per-source count (not a tiny preview)."""
+    import tenderfinder_raw_sweep as raw_sweep
+
+    many_leads = [_fake_lead(project_id=f"P{i}", app_no=f"A{i}", address=f"{i} Main St")
+                  for i in range(150)]
+    original = raw_sweep.run_connector
+    raw_sweep.run_connector = lambda conn, max_records, probe=False, raw_dir=None, **kw: {
+        "status": "load_ok", "error": "", "leads": many_leads[:max_records], "http_status": 200,
+    }
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state"
+            run_id = "run_full_sweep_e2e"
+            request = rs.RefreshRequest(
+                state_root=state, package_root=REPO_ROOT, run_id=run_id,
+                source_ids=("maple_ridge_devapps",), max_records_per_source=500,
+            )
+            acquirer = rs.make_full_sweep_acquirer(request, package_root=REPO_ROOT, run_id=run_id)
+            result = rs.refresh_development_data(request, acquirer=acquirer, scorer=_fake_scorer)
+
+            assert result.succeeded, result.message
+            assert result.metrics.records_fetched == 150  # far above a ~5-record preview
+            assert result.metrics.normalized_records == 150
+            active = dm.load_active_dataset(state_root=state, package_root=REPO_ROOT)
+            assert active is not None and active.record_counts["total"] == 150
+    finally:
+        raw_sweep.run_connector = original
+
+
+def test_diagnostic_preview_and_full_sweep_are_distinct_functions() -> None:
+    # Guards against accidentally re-aliasing the bounded preview back onto the
+    # production entry point (the original Gap A defect).
+    assert rs.full_sweep_development_acquirer is not rs.diagnostic_preview_acquirer
+    assert rs.default_development_acquirer is rs.diagnostic_preview_acquirer
+
+
 def main() -> int:
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]

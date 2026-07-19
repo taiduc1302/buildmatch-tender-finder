@@ -90,6 +90,93 @@ def test_top_ranked_opportunity_none_when_no_dataset() -> None:
     assert record is None and evidence is None
 
 
+# --------------------------------------------------------------------------- #
+# Ranked-opportunity selection (Gap B fix): the AI action must analyze the
+# opportunity the user actually selected in the ranked list, never an
+# auto-picked record silently substituted for "selected".
+# --------------------------------------------------------------------------- #
+
+
+def test_ranked_opportunities_returns_full_sorted_list() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
+        ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
+    assert len(ranked) == 8  # the full snapshot, not a truncated top-N preview
+    fits = [item["evidence"]["fit_score"] for item in ranked]
+    assert fits == sorted(fits, reverse=True)  # default sort: fit score descending
+    ranks = [item["rank"] for item in ranked]
+    assert ranks == list(range(1, len(ranked) + 1))
+
+
+def test_ranked_opportunities_empty_without_active_dataset() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        ranked = g.ranked_opportunities(state_root=tmp, package_root=REPO_ROOT)
+    assert ranked == []
+
+
+def test_resolve_selected_opportunity_maps_correct_record() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
+        ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
+    # select rank 3 specifically - must return exactly that record, not rank 1.
+    third_record_id = ranked[2]["record"]["record_id"]
+    record, evidence = g.resolve_selected_opportunity(ranked, 3)
+    assert record is not None
+    assert record["record_id"] == third_record_id
+    assert evidence["fit_score"] == ranked[2]["evidence"]["fit_score"]
+    # the top-ranked (rank 1) record must NOT have been silently substituted
+    assert record["record_id"] != ranked[0]["record"]["record_id"] or third_record_id == ranked[0]["record"]["record_id"]
+
+
+def test_resolve_selected_opportunity_no_selection_returns_none() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
+        ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
+    record, evidence = g.resolve_selected_opportunity(ranked, None)
+    assert record is None and evidence is None
+
+
+def test_resolve_selected_opportunity_stale_rank_returns_none_not_a_substitute() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
+        ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
+    # a rank that doesn't exist in the current list (e.g. stale selection after
+    # a refresh shrank the list) must resolve to nothing, never a fallback pick.
+    record, evidence = g.resolve_selected_opportunity(ranked, 9999)
+    assert record is None and evidence is None
+
+
+def test_opportunity_row_values_shape() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
+        ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
+    row = g.opportunity_row_values(ranked[0])
+    assert len(row) == 9
+    assert row[0] == 1  # rank
+    assert isinstance(row[1], int)  # fit score
+    assert row[2] in ("Future_Projects", "Run_Queue", "Rejected_Archive")
+
+
+def test_ai_analysis_uses_selected_record_not_top_ranked() -> None:
+    """The core Gap-B assertion: analyzing a user-selected (non-top) record must
+    send THAT record's evidence to the AI service, not the top-ranked one's."""
+    with tempfile.TemporaryDirectory() as tmp:
+        snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
+        ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
+        # find a rank that is NOT the top-ranked one and has a distinct record_id
+        chosen = next(item for item in ranked if item["rank"] != 1)
+        record, evidence = g.resolve_selected_opportunity(ranked, chosen["rank"])
+        assert record["record_id"] != ranked[0]["record"]["record_id"]
+
+        captured = {}
+        view = g.analyze_record_headless(
+            record, "civil_contractor", evidence, state_root=tmp, package_root=REPO_ROOT,
+            client_factory=lambda: _FakeClient(_payload(record["record_id"])),
+        )
+    assert view["record_id"] == record["record_id"]
+    assert view["record_id"] != ranked[0]["record"]["record_id"]
+
+
 def test_analyze_record_headless_preserves_deterministic() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         record = {"record_id": "R1", "scope_summary": "watermain and sanitary sewer servicing"}

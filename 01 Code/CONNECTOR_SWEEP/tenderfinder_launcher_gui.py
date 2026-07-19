@@ -457,27 +457,30 @@ def _read_dataset_records(path: Path) -> list[dict]:
     return []
 
 
-def top_ranked_opportunity(
+def ranked_opportunities(
     *,
     state_root: str | Path | None = None,
     preset_id: str = DEFAULT_PRESET_ID,
     package_root: Path = ROOT_DIR,
-) -> tuple[dict | None, dict | None]:
-    """Return (record, deterministic_evidence) for the highest-fit record of the
-    active dataset under the selected preset, or (None, None) if unavailable.
+    limit: int = 500,
+) -> list[dict]:
+    """Score every record of the active dataset under the given preset and
+    return the full ranked list, sorted by fit score descending.
 
-    This is the headless equivalent of "select the top ranked opportunity" so
-    the GUI's AI button has a concrete record to analyze without an in-GUI grid.
+    Each item is ``{"rank": int, "record": dict, "evidence": dict}``. Returns
+    ``[]`` when there is no active dataset. This backs the GUI's ranked
+    opportunity selection table — the user picks a specific row, rather than
+    the tool silently picking one for them.
     """
     provenance = data_modes.load_active_dataset(state_root=state_root, package_root=package_root)
     if provenance is None or not provenance.path:
-        return None, None
+        return []
     path = Path(provenance.path)
     if not path.exists():
-        return None, None
+        return []
     records = _read_dataset_records(path)
     if not records:
-        return None, None
+        return []
 
     import os as _os
 
@@ -489,9 +492,7 @@ def top_ranked_opportunity(
         resolve_preset_keywords_path(preset_id, root=package_root)
     )
     try:
-        best = None
-        best_evidence = None
-        best_fit = -1
+        scored: list[dict] = []
         for record in records:
             text = " ".join(
                 str(record.get(key, ""))
@@ -500,26 +501,96 @@ def top_ranked_opportunity(
             _clear()
             breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
             fit = breakdown["fit_score"]
-            if fit > best_fit:
-                best_fit = fit
-                bucket = (
-                    "Future_Projects" if fit >= 60 else
-                    "Run_Queue" if fit >= 50 else "Rejected_Archive"
-                )
-                best = record
-                best_evidence = {
-                    "fit_score": fit,
-                    "routing_bucket": bucket,
-                    "matched_positive_terms": [r.keyword for r in breakdown["positive_matches"]],
-                    "matched_negative_terms": [r.keyword for r in breakdown["negative_matches"]],
-                }
-        return best, best_evidence
+            bucket = (
+                "Future_Projects" if fit >= 60 else
+                "Run_Queue" if fit >= 50 else "Rejected_Archive"
+            )
+            evidence = {
+                "fit_score": fit,
+                "routing_bucket": bucket,
+                "matched_positive_terms": [r.keyword for r in breakdown["positive_matches"]],
+                "matched_negative_terms": [r.keyword for r in breakdown["negative_matches"]],
+            }
+            scored.append({"record": record, "evidence": evidence})
+        scored.sort(key=lambda item: item["evidence"]["fit_score"], reverse=True)
+        scored = scored[:limit]
+        for index, item in enumerate(scored, start=1):
+            item["rank"] = index
+        return scored
     finally:
         if previous is None:
             _os.environ.pop("TENDER_FINDER_KEYWORDS_CONFIG", None)
         else:
             _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = previous
         _clear()
+
+
+def top_ranked_opportunity(
+    *,
+    state_root: str | Path | None = None,
+    preset_id: str = DEFAULT_PRESET_ID,
+    package_root: Path = ROOT_DIR,
+) -> tuple[dict | None, dict | None]:
+    """Return (record, deterministic_evidence) for the single highest-fit
+    record of the active dataset, or (None, None) if unavailable.
+
+    This is a convenience shortcut ONLY — it backs the explicitly-labelled
+    "Analyze Top-Ranked Opportunity" action. The primary "Analyze Selected
+    Opportunity with AI" action must use an actual user selection from the
+    ranked-opportunities table (see ``resolve_selected_opportunity``), never
+    this auto-pick.
+    """
+    ranked = ranked_opportunities(
+        state_root=state_root, preset_id=preset_id, package_root=package_root, limit=1
+    )
+    if not ranked:
+        return None, None
+    return ranked[0]["record"], ranked[0]["evidence"]
+
+
+def resolve_selected_opportunity(
+    ranked: list[dict], selected_rank: int | None
+) -> tuple[dict | None, dict | None]:
+    """Map a 1-based rank (from the ranked-opportunities table selection) back
+    to ``(record, evidence)``.
+
+    Returns ``(None, None)`` when nothing is selected or the rank is not found
+    in the current ranked list (e.g. a stale selection after a refresh) —
+    NEVER silently substitutes a different opportunity such as the top-ranked
+    one.
+    """
+    if selected_rank is None:
+        return None, None
+    for item in ranked:
+        if item["rank"] == selected_rank:
+            return item["record"], item["evidence"]
+    return None, None
+
+
+def opportunity_row_values(item: dict) -> tuple:
+    """Treeview column values for one ranked-opportunity item: rank, fit score,
+    bucket, title, municipality, type/stage, status, source, record ID."""
+    record = item["record"]
+    evidence = item["evidence"]
+    title = (
+        record.get("scope_summary") or record.get("title")
+        or record.get("tender_title") or record.get("address") or ""
+    )
+    title = str(title)
+    if len(title) > 90:
+        title = title[:87] + "..."
+    record_id = record.get("lead_id") or record.get("app_no") or record.get("record_id") or ""
+    return (
+        item["rank"],
+        evidence["fit_score"],
+        evidence["routing_bucket"],
+        title,
+        record.get("municipality", ""),
+        record.get("app_type_stage", ""),
+        record.get("status_class", record.get("status", "")),
+        record.get("source", record.get("source_id", "")),
+        record_id,
+    )
 
 
 def build_demo_command(
@@ -992,12 +1063,14 @@ class TenderFinderLauncherApp:
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
         self.run_tab = ttk.Frame(self.notebook, padding=pad)
+        self.opportunities_tab = ttk.Frame(self.notebook, padding=pad)
         self.keywords_tab = ttk.Frame(self.notebook, padding=pad)
         self.email_tab = ttk.Frame(self.notebook, padding=pad)
         self.source_tab = ttk.Frame(self.notebook, padding=pad)
         self.results_tab = ttk.Frame(self.notebook, padding=pad)
         self.settings_tab = ttk.Frame(self.notebook, padding=pad)
         self.notebook.add(self.run_tab, text="Run")
+        self.notebook.add(self.opportunities_tab, text="Ranked Opportunities")
         self.notebook.add(self.keywords_tab, text="Keywords")
         self.notebook.add(self.email_tab, text="Email Alerts")
         self.notebook.add(self.source_tab, text="Source Checks")
@@ -1006,6 +1079,7 @@ class TenderFinderLauncherApp:
 
         for tab in (
             self.run_tab,
+            self.opportunities_tab,
             self.keywords_tab,
             self.email_tab,
             self.source_tab,
@@ -1015,6 +1089,7 @@ class TenderFinderLauncherApp:
             tab.columnconfigure(0, weight=1)
 
         self._build_run_tab()
+        self._build_opportunities_tab()
         self._build_keywords_tab()
         self._build_email_tab()
         self._build_source_tab()
@@ -1083,18 +1158,17 @@ class TenderFinderLauncherApp:
             buildweek, text="Refresh Development Data", command=self._on_refresh_dev_clicked
         )
         self.refresh_dev_button.grid(row=1, column=2, sticky="ew", padx=6, pady=(0, 8))
-        self.ai_analyze_button = ttk.Button(
-            buildweek, text="Analyze Selected Opportunity with AI",
-            command=self._on_ai_analyze_clicked,
+        self.view_opportunities_button = ttk.Button(
+            buildweek, text="View Ranked Opportunities →",
+            command=self._on_view_opportunities_clicked,
         )
-        self.ai_analyze_button.grid(row=1, column=3, sticky="ew", padx=(6, 10), pady=(0, 8))
-        self.ai_status_var = tk.StringVar(value=(
-            "AI ready." if openai_key_present() else
-            "AI: set OPENAI_API_KEY to enable (deterministic ranking works without it)."
-        ))
+        self.view_opportunities_button.grid(row=1, column=3, sticky="ew", padx=(6, 10), pady=(0, 8))
         ttk.Label(
-            buildweek, textvariable=self.ai_status_var, font=(UI_FONT, 8),
-            wraplength=980, justify="left",
+            buildweek,
+            text="Select a contractor profile, refresh development data (or use the Public "
+                 "Snapshot demo), then open Ranked Opportunities to pick a specific opportunity "
+                 "and analyze it with AI.",
+            font=(UI_FONT, 8), wraplength=980, justify="left",
         ).grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
 
         output = ttk.LabelFrame(self.run_tab, text="Post-Run Actions")
@@ -1136,6 +1210,92 @@ class TenderFinderLauncherApp:
         quick.columnconfigure(0, weight=1)
         ttk.Label(quick, textvariable=self.result_var, font=(UI_FONT, 9), wraplength=980, justify="left").grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
         ttk.Label(quick, textvariable=self.result_paths_var, font=(UI_FONT, 8), wraplength=980, justify="left").grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+
+    def _build_opportunities_tab(self) -> None:
+        """Ranked-opportunity selection: the user picks a specific row and
+        analyzes THAT record with AI - the tool never silently substitutes the
+        top-ranked (or any other) opportunity for a manual selection."""
+        tk, ttk = self.tk, self.ttk
+
+        banner = ttk.LabelFrame(self.opportunities_tab, text="Ranked Opportunities")
+        banner.grid(row=0, column=0, sticky="ew")
+        banner.columnconfigure(0, weight=1)
+        self.opportunities_data_mode_var = tk.StringVar(value=current_data_mode_banner(package_root=ROOT_DIR))
+        ttk.Label(
+            banner, textvariable=self.opportunities_data_mode_var, font=(UI_FONT, 9, "bold"),
+            wraplength=980, justify="left",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+        controls = ttk.Frame(banner)
+        controls.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+        self.load_opportunities_button = ttk.Button(
+            controls, text="Load / Refresh Ranked List", command=self._on_load_opportunities_clicked
+        )
+        self.load_opportunities_button.grid(row=0, column=0, sticky="w")
+        self.opportunities_count_var = tk.StringVar(value="No ranked opportunities loaded yet.")
+        ttk.Label(controls, textvariable=self.opportunities_count_var, font=(UI_FONT, 9)).grid(
+            row=0, column=1, sticky="w", padx=(10, 0)
+        )
+
+        table_frame = ttk.LabelFrame(self.opportunities_tab, text="Select an opportunity")
+        table_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        self.opportunities_tab.rowconfigure(1, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = ("rank", "fit", "bucket", "title", "municipality", "type", "status", "source", "record_id")
+        headings = {
+            "rank": "#", "fit": "Fit", "bucket": "Bucket", "title": "Title / Scope",
+            "municipality": "Municipality", "type": "Type/Stage", "status": "Status",
+            "source": "Source", "record_id": "Record ID",
+        }
+        widths = {
+            "rank": 40, "fit": 50, "bucket": 110, "title": 340, "municipality": 100,
+            "type": 130, "status": 80, "source": 130, "record_id": 100,
+        }
+        self.opportunities_tree = ttk.Treeview(
+            table_frame, columns=columns, show="headings", selectmode="browse", height=14
+        )
+        for col in columns:
+            self.opportunities_tree.heading(col, text=headings[col])
+            self.opportunities_tree.column(col, width=widths[col], anchor="w", stretch=(col == "title"))
+        self.opportunities_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=10)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.opportunities_tree.yview)
+        self.opportunities_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=10)
+        self.opportunities_tree.bind("<<TreeviewSelect>>", self._on_opportunity_selected)
+
+        detail = ttk.LabelFrame(self.opportunities_tab, text="Selected opportunity — deterministic evidence")
+        detail.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        detail.columnconfigure(0, weight=1)
+        self.selected_opportunity_var = tk.StringVar(value="No opportunity selected.")
+        ttk.Label(
+            detail, textvariable=self.selected_opportunity_var, font=(UI_FONT, 9),
+            wraplength=980, justify="left",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+
+        actions = ttk.Frame(self.opportunities_tab)
+        actions.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        self.ai_analyze_button = ttk.Button(
+            actions, text="Analyze Selected Opportunity with AI",
+            command=self._on_ai_analyze_clicked, state="disabled",
+        )
+        self.ai_analyze_button.grid(row=0, column=0, sticky="w")
+        self.ai_analyze_top_button = ttk.Button(
+            actions, text="Analyze Top-Ranked Opportunity",
+            command=self._on_ai_analyze_top_clicked, state="disabled",
+        )
+        self.ai_analyze_top_button.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.ai_status_var = tk.StringVar(value=(
+            "AI ready." if openai_key_present() else
+            "AI: set OPENAI_API_KEY to enable (deterministic ranking works without it)."
+        ))
+        ttk.Label(
+            self.opportunities_tab, textvariable=self.ai_status_var, font=(UI_FONT, 8),
+            wraplength=980, justify="left",
+        ).grid(row=4, column=0, sticky="ew", pady=(6, 0))
+
+    def _on_view_opportunities_clicked(self) -> None:
+        self.notebook.select(self.opportunities_tab)
 
     def _build_keywords_tab(self) -> None:
         tk, ttk = self.tk, self.ttk
@@ -1913,9 +2073,12 @@ class TenderFinderLauncherApp:
 
     def _refresh_data_mode_banner(self) -> None:
         try:
-            self.data_mode_var.set(current_data_mode_banner(package_root=ROOT_DIR))
+            banner = current_data_mode_banner(package_root=ROOT_DIR)
         except Exception:
-            pass
+            return
+        self.data_mode_var.set(banner)
+        if hasattr(self, "opportunities_data_mode_var"):
+            self.opportunities_data_mode_var.set(banner)
 
     def _on_refresh_dev_clicked(self) -> None:
         if getattr(self, "_dev_refresh_running", False):
@@ -1928,10 +2091,16 @@ class TenderFinderLauncherApp:
 
         def worker() -> None:
             try:
-                result = refresh_service.refresh_development_data(
-                    refresh_service.RefreshRequest(preset_id=preset_id, package_root=ROOT_DIR),
-                    acquirer=refresh_service.default_development_acquirer,
+                run_id = data_modes.new_dataset_id("refresh")
+                request = refresh_service.RefreshRequest(
+                    preset_id=preset_id, package_root=ROOT_DIR, run_id=run_id,
                 )
+                # Real full paginated sweep (tenderfinder_raw_sweep.run_connector),
+                # not a bounded connector-test preview.
+                acquirer = refresh_service.make_full_sweep_acquirer(
+                    request, package_root=ROOT_DIR, run_id=run_id
+                )
+                result = refresh_service.refresh_development_data(request, acquirer=acquirer)
                 self._refresh_result_queue.put(("ok", result))
             except Exception as exc:  # noqa: BLE001 - surface any failure to the user
                 self._refresh_result_queue.put(("error", str(exc)))
@@ -1964,11 +2133,118 @@ class TenderFinderLauncherApp:
             result.message if result.succeeded
             else f"{result.message} (previous data retained)"
         )
+        if result.succeeded and hasattr(self, "opportunities_count_var"):
+            self.opportunities_count_var.set(
+                "New data refreshed. Click 'Load / Refresh Ranked List' to see it here."
+            )
         (self.messagebox.showinfo if result.succeeded else self.messagebox.showwarning)(
             "Refresh Development Data", result.message
         )
 
+    # --- Opportunities tab: ranked list, selection, AI on the selected row --- #
+
+    def _on_load_opportunities_clicked(self) -> None:
+        if getattr(self, "_opportunities_loading", False):
+            return
+        self._opportunities_loading = True
+        self.load_opportunities_button.configure(state="disabled")
+        self.opportunities_count_var.set("Loading ranked opportunities...")
+        self._opportunities_queue: queue.Queue = queue.Queue()
+        preset_id = self.selected_preset_id()
+
+        def worker() -> None:
+            try:
+                ranked = ranked_opportunities(preset_id=preset_id, package_root=ROOT_DIR)
+                self._opportunities_queue.put(("ok", ranked))
+            except Exception as exc:  # noqa: BLE001
+                self._opportunities_queue.put(("error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(200, self._poll_opportunities_queue)
+
+    def _poll_opportunities_queue(self) -> None:
+        try:
+            kind, payload = self._opportunities_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(200, self._poll_opportunities_queue)
+            return
+        self._opportunities_loading = False
+        self.load_opportunities_button.configure(state="normal")
+        if kind == "error":
+            self.opportunities_count_var.set(f"Failed to load ranked opportunities: {payload}")
+            return
+        self._ranked_opportunities = payload
+        for row_id in self.opportunities_tree.get_children():
+            self.opportunities_tree.delete(row_id)
+        for item in self._ranked_opportunities:
+            self.opportunities_tree.insert(
+                "", "end", iid=str(item["rank"]), values=opportunity_row_values(item)
+            )
+        if self._ranked_opportunities:
+            self.opportunities_count_var.set(
+                f"{len(self._ranked_opportunities)} ranked opportunities loaded. "
+                f"Select one, then click 'Analyze Selected Opportunity with AI'."
+            )
+            self.ai_analyze_top_button.configure(state="normal")
+        else:
+            self.opportunities_count_var.set(
+                "No opportunities available yet. Run 'Refresh Development Data' "
+                "(Run tab) or load the Public Snapshot demo first."
+            )
+            self.ai_analyze_top_button.configure(state="disabled")
+        self.selected_opportunity_var.set("No opportunity selected.")
+        self.ai_analyze_button.configure(state="disabled")
+
+    def _selected_opportunity_rank(self) -> int | None:
+        selection = self.opportunities_tree.selection()
+        if not selection:
+            return None
+        try:
+            return int(selection[0])
+        except (TypeError, ValueError):
+            return None
+
+    def _on_opportunity_selected(self, _event=None) -> None:
+        rank = self._selected_opportunity_rank()
+        record, evidence = resolve_selected_opportunity(
+            getattr(self, "_ranked_opportunities", []), rank
+        )
+        if record is None:
+            self.selected_opportunity_var.set("No opportunity selected.")
+            self.ai_analyze_button.configure(state="disabled")
+            return
+        title = record.get("scope_summary") or record.get("title") or record.get("address") or ""
+        self.selected_opportunity_var.set(
+            f"#{rank}  Fit score {evidence['fit_score']}  ({evidence['routing_bucket']})\n"
+            f"{title}\n"
+            f"Matched positive terms: {', '.join(evidence['matched_positive_terms']) or '—'}\n"
+            f"Matched negative terms: {', '.join(evidence['matched_negative_terms']) or '—'}"
+        )
+        self.ai_analyze_button.configure(state="normal")
+
     def _on_ai_analyze_clicked(self) -> None:
+        """Analyze the opportunity the user actually selected in the ranked
+        list. Never substitutes another record — if nothing is selected, the
+        button is disabled and this only fires from a stale/cleared selection
+        edge case, which is handled explicitly rather than silently picking one."""
+        if getattr(self, "_ai_running", False):
+            return
+        rank = self._selected_opportunity_rank()
+        record, evidence = resolve_selected_opportunity(
+            getattr(self, "_ranked_opportunities", []), rank
+        )
+        if record is None:
+            self.messagebox.showinfo(
+                "AI Analysis",
+                "Select an opportunity in the ranked list first, then click "
+                "'Analyze Selected Opportunity with AI'.",
+            )
+            return
+        self._run_ai_analysis(record, evidence)
+
+    def _on_ai_analyze_top_clicked(self) -> None:
+        """Explicit, separately-labelled convenience shortcut that analyzes the
+        top-ranked opportunity without requiring a manual selection."""
         if getattr(self, "_ai_running", False):
             return
         record, evidence = top_ranked_opportunity(
@@ -1981,9 +2257,13 @@ class TenderFinderLauncherApp:
                 "Data' or load the Public Snapshot demo first.",
             )
             return
+        self._run_ai_analysis(record, evidence)
+
+    def _run_ai_analysis(self, record: dict, evidence: dict) -> None:
         self._ai_running = True
         self.ai_analyze_button.configure(state="disabled")
-        self.ai_status_var.set("Requesting AI analysis of the top-ranked opportunity...")
+        self.ai_analyze_top_button.configure(state="disabled")
+        self.ai_status_var.set("Requesting AI analysis of the selected opportunity...")
         self._ai_result_queue: queue.Queue = queue.Queue()
         preset_id = self.selected_preset_id()
 
@@ -2004,7 +2284,12 @@ class TenderFinderLauncherApp:
             self.root.after(200, self._poll_ai_queue)
             return
         self._ai_running = False
-        self.ai_analyze_button.configure(state="normal")
+        self.ai_analyze_button.configure(
+            state="normal" if self._selected_opportunity_rank() is not None else "disabled"
+        )
+        self.ai_analyze_top_button.configure(
+            state="normal" if getattr(self, "_ranked_opportunities", []) else "disabled"
+        )
         if kind == "error":
             self.ai_status_var.set(f"AI analysis error: {payload}")
             self.messagebox.showerror("AI Analysis", f"AI analysis error:\n{payload}")

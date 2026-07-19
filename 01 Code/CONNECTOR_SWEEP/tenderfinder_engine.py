@@ -73,6 +73,12 @@ SELF_TEST_SCRIPTS = (
     ("manual_outreach_persistence", "test_outreach_persistence.py"),
     ("review_workbook_discovery", "test_launcher_review_xlsx_consistency.py"),
     ("tender_signal_routing", "test_tender_signal_routing.py"),
+    ("buildweek_data_modes", "test_buildweek_data_modes.py"),
+    ("buildweek_presets", "test_buildweek_presets.py"),
+    ("buildweek_refresh_service", "test_buildweek_refresh_service.py"),
+    ("buildweek_ai_analysis", "test_buildweek_ai_analysis.py"),
+    ("buildweek_gui_helpers", "test_buildweek_gui_helpers.py"),
+    ("buildweek_snapshot", "test_buildweek_snapshot.py"),
 )
 
 SELF_TEST_INTENTIONAL_EXCLUSIONS = (
