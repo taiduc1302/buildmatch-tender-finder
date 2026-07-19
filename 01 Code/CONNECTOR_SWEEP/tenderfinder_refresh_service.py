@@ -263,9 +263,16 @@ def _read_records_for_scoring(dataset_path: Path) -> list[dict[str, Any]]:
             return list(csv.DictReader(handle))
     import openpyxl
 
+    # Explicit close is required: a read_only workbook keeps its zip/file
+    # handle open, and on Windows an open handle blocks deleting/replacing
+    # the file (unlike POSIX, which allows unlinking an open file) - this
+    # caused a real PermissionError during Windows CI temp-directory cleanup.
     wb = openpyxl.load_workbook(dataset_path, read_only=True, data_only=True)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
+    try:
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+    finally:
+        wb.close()
     if not rows:
         return []
     headers = [str(h) if h is not None else "" for h in rows[0]]
@@ -304,41 +311,47 @@ def default_scorer(
 
     import tenderfinder_guards as _guards
     from tenderfinder_excel_safety import append_untrusted_row
-    from tenderfinder_keywords_config import clear_keywords_cache as _clear
+    from tenderfinder_keywords_config import (
+        KEYWORDS_ENV_OVERRIDE_LOCK as _lock,
+        clear_keywords_cache as _clear,
+    )
     from tenderfinder_presets import resolve_preset_keywords_path
 
     records = _read_records_for_scoring(dataset_path)
-    previous = _os.environ.get("TENDER_FINDER_KEYWORDS_CONFIG")
-    _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = str(
-        resolve_preset_keywords_path(preset_id, root=package_root)
-    )
-    try:
-        scored_rows: list[dict[str, Any]] = []
-        bid_later = watch = skip = 0
-        for record in records:
-            text = " ".join(
-                str(record.get(key, ""))
-                for key in ("scope_summary", "app_type_stage", "address")
-            )
-            _clear()
-            breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
-            fit = breakdown["fit_score"]
-            if fit >= _BID_LATER_MIN_FIT:
-                bucket = "BID_LATER"
-                bid_later += 1
-            elif fit >= _WATCH_MIN_FIT:
-                bucket = "WATCH"
-                watch += 1
+    # Serialize against any other concurrent preset-scoring pass (e.g. the
+    # GUI's Ranked Opportunities load) - CONFIG_ENV_VAR is process-global.
+    with _lock:
+        previous = _os.environ.get("TENDER_FINDER_KEYWORDS_CONFIG")
+        _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = str(
+            resolve_preset_keywords_path(preset_id, root=package_root)
+        )
+        try:
+            scored_rows: list[dict[str, Any]] = []
+            bid_later = watch = skip = 0
+            for record in records:
+                text = " ".join(
+                    str(record.get(key, ""))
+                    for key in ("scope_summary", "app_type_stage", "address")
+                )
+                _clear()
+                breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
+                fit = breakdown["fit_score"]
+                if fit >= _BID_LATER_MIN_FIT:
+                    bucket = "BID_LATER"
+                    bid_later += 1
+                elif fit >= _WATCH_MIN_FIT:
+                    bucket = "WATCH"
+                    watch += 1
+                else:
+                    bucket = "SKIP"
+                    skip += 1
+                scored_rows.append({**record, "fit_score": fit, "bucket": bucket})
+        finally:
+            if previous is None:
+                _os.environ.pop("TENDER_FINDER_KEYWORDS_CONFIG", None)
             else:
-                bucket = "SKIP"
-                skip += 1
-            scored_rows.append({**record, "fit_score": fit, "bucket": bucket})
-    finally:
-        if previous is None:
-            _os.environ.pop("TENDER_FINDER_KEYWORDS_CONFIG", None)
-        else:
-            _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = previous
-        _clear()
+                _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = previous
+            _clear()
 
     scored_rows.sort(key=lambda row: row["fit_score"], reverse=True)
 

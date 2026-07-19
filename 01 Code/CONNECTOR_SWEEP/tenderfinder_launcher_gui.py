@@ -447,9 +447,14 @@ def _read_dataset_records(path: Path) -> list[dict]:
     if suffix in (".xlsx", ".xlsm"):
         import openpyxl
 
+        # Explicit close: a read_only workbook keeps its file handle open,
+        # and on Windows that blocks deleting/replacing the file afterward.
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
+        try:
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+        finally:
+            wb.close()
         if not rows:
             return []
         headers = [str(h) if h is not None else "" for h in rows[0]]
@@ -484,45 +489,51 @@ def ranked_opportunities(
 
     import os as _os
 
-    from tenderfinder_keywords_config import clear_keywords_cache as _clear
+    from tenderfinder_keywords_config import (
+        KEYWORDS_ENV_OVERRIDE_LOCK as _lock,
+        clear_keywords_cache as _clear,
+    )
     import tenderfinder_guards as _guards
 
-    previous = _os.environ.get("TENDER_FINDER_KEYWORDS_CONFIG")
-    _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = str(
-        resolve_preset_keywords_path(preset_id, root=package_root)
-    )
-    try:
-        scored: list[dict] = []
-        for record in records:
-            text = " ".join(
-                str(record.get(key, ""))
-                for key in ("scope_summary", "app_type_stage", "address", "title", "tender_title")
-            )
+    # Serialize against any other concurrent preset-scoring pass (e.g. a
+    # Refresh Development Data run's scorer) - CONFIG_ENV_VAR is process-global.
+    with _lock:
+        previous = _os.environ.get("TENDER_FINDER_KEYWORDS_CONFIG")
+        _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = str(
+            resolve_preset_keywords_path(preset_id, root=package_root)
+        )
+        try:
+            scored: list[dict] = []
+            for record in records:
+                text = " ".join(
+                    str(record.get(key, ""))
+                    for key in ("scope_summary", "app_type_stage", "address", "title", "tender_title")
+                )
+                _clear()
+                breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
+                fit = breakdown["fit_score"]
+                bucket = (
+                    "Future_Projects" if fit >= 60 else
+                    "Run_Queue" if fit >= 50 else "Rejected_Archive"
+                )
+                evidence = {
+                    "fit_score": fit,
+                    "routing_bucket": bucket,
+                    "matched_positive_terms": [r.keyword for r in breakdown["positive_matches"]],
+                    "matched_negative_terms": [r.keyword for r in breakdown["negative_matches"]],
+                }
+                scored.append({"record": record, "evidence": evidence})
+            scored.sort(key=lambda item: item["evidence"]["fit_score"], reverse=True)
+            scored = scored[:limit]
+            for index, item in enumerate(scored, start=1):
+                item["rank"] = index
+            return scored
+        finally:
+            if previous is None:
+                _os.environ.pop("TENDER_FINDER_KEYWORDS_CONFIG", None)
+            else:
+                _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = previous
             _clear()
-            breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
-            fit = breakdown["fit_score"]
-            bucket = (
-                "Future_Projects" if fit >= 60 else
-                "Run_Queue" if fit >= 50 else "Rejected_Archive"
-            )
-            evidence = {
-                "fit_score": fit,
-                "routing_bucket": bucket,
-                "matched_positive_terms": [r.keyword for r in breakdown["positive_matches"]],
-                "matched_negative_terms": [r.keyword for r in breakdown["negative_matches"]],
-            }
-            scored.append({"record": record, "evidence": evidence})
-        scored.sort(key=lambda item: item["evidence"]["fit_score"], reverse=True)
-        scored = scored[:limit]
-        for index, item in enumerate(scored, start=1):
-            item["rank"] = index
-        return scored
-    finally:
-        if previous is None:
-            _os.environ.pop("TENDER_FINDER_KEYWORDS_CONFIG", None)
-        else:
-            _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = previous
-        _clear()
 
 
 def top_ranked_opportunity(

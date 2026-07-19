@@ -242,8 +242,11 @@ def test_dataset_writer_neutralizes_formula_injection() -> None:
         ]
         rs._default_dataset_writer(malicious, dest)
         wb = openpyxl.load_workbook(dest, read_only=True)
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
+        try:
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+        finally:
+            wb.close()  # required on Windows: an open handle blocks the temp-dir cleanup below
         data_row = dict(zip(rows[0], rows[1]))
         # every formula-prefixed value must come back with a literal-text
         # marker, never as a live formula.
@@ -263,8 +266,11 @@ def test_default_scorer_neutralizes_formula_injection() -> None:
         )
         score = rs.default_scorer(dataset_path, out_dir, preset_id="civil_contractor", package_root=REPO_ROOT)
         wb = openpyxl.load_workbook(score.output_path, read_only=True)
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
+        try:
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+        finally:
+            wb.close()
         data_row = dict(zip(rows[0], rows[1]))
         assert str(data_row["scope_summary"]).startswith("'")
 
