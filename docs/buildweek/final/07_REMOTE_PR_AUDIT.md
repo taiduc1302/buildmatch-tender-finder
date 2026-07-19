@@ -7,19 +7,23 @@ judge, external security reviewer.
 ## Remote state (verified via the GitHub API, not asserted)
 
 - **Repository:** `taiduc1302/buildmatch-tender-finder`
-- **PR:** #3, **state:** open, **draft:** true, **merged:** false
+- **PR:** #3, **state:** open, **draft:** true, **merged:** false, **mergeable_state:** `clean`
 - **Base:** `main` @ `d25ae14052834d534bc95ed78d915a949a63242d`
-- **Head:** `claude/buildmatch-tender-finder-completion-03pg2w` @ `3725deea149af1ae8411b36357a4307bfb6e3313`
-- **Commits:** 12 total (6 from the prior session, 6 from this session)
-- **Changed files:** 60, +8,624 / -29
-- **Review comments/threads:** 0 (none to address)
+- **Head:** `claude/buildmatch-tender-finder-completion-03pg2w` @ `f603fde96f687c7467754fdc2fdbe5bbb89cbb3a`
+- **Commits:** 13 total (6 from the prior session, 7 from this session)
+- **Changed files:** 62, +8,764 / -29
+- **Review comments/threads:** 0 (re-checked at the final head; still none to address)
 - **CI (`Offline verification — Windows, Python 3.12`):**
   - Run 1 (commit `b54fc3d`): **FAILURE** — `PermissionError: [WinError 32]`
     during `tempfile.TemporaryDirectory` cleanup, caused by an unclosed
     `openpyxl` read-only workbook handle (found and fixed same session).
   - Run 2 (commit `b9b5663`, the fix): **SUCCESS**.
   - Run 3 (commit `3725dee`, docs-only): **SUCCESS**.
-  - **Final state: genuinely green**, not asserted without evidence.
+  - Run 4 (commit `f603fde`, the final docs-only push containing this and the
+    08_FINAL_COMPETITION_SCORECARD.md file): **SUCCESS**.
+  - **Final state at the true PR head: genuinely green**, confirmed via a
+    follow-up check after this document's first draft (which had referenced
+    the second-to-last commit) — not asserted without evidence.
 
 ## File list cross-check
 
