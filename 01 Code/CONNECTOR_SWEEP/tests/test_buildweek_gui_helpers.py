@@ -101,7 +101,8 @@ def test_ranked_opportunities_returns_full_sorted_list() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
         ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
-    assert len(ranked) == 8  # the full snapshot, not a truncated top-N preview
+        records, _manifest = snap.load_snapshot(REPO_ROOT)
+    assert len(ranked) == len(records)  # the full snapshot, not a truncated top-N preview
     fits = [item["evidence"]["fit_score"] for item in ranked]
     assert fits == sorted(fits, reverse=True)  # default sort: fit score descending
     ranks = [item["rank"] for item in ranked]

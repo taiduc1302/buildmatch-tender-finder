@@ -1,72 +1,457 @@
 {
   "schema_version": 1,
-  "snapshot_id": "public_snapshot_2026_07_19",
+  "snapshot_id": "public_snapshot_2026_07_19_live_sample",
   "data_mode": "PUBLIC_SNAPSHOT",
-  "capture_timestamp": "2026-07-19T09:00:00-07:00",
+  "capture_timestamp": "2026-07-19T10:10:47-07:00",
   "dataset_file": "development_snapshot.csv",
-  "content_hash": "a4048330c37b69b50800a431bea8acc902515eb0df8794bc964ec90627eaf8fe",
-  "record_count": 8,
-  "sanitization": "Fictitious-but-realistic public development-application records. No secrets, internal notes, local paths, or unnecessary personal data. Applicant names are invented.",
+  "content_hash": "8360c64614083bed98e9a8c262c7dbf0ad17dc0ca90fdf6ec5dad3fd37001e95",
+  "record_count": 82,
+  "sanitization": "Real public development-application records captured via a controlled live sweep against approved public municipal open-data feeds. Personal applicant names redacted to 'Not available'; only corporate/business entity names retained. No internal notes, local paths, secrets, or contact details.",
   "source_provenance": [
     {
       "source_id": "surrey_devapps_v2",
-      "name": "City of Surrey Development Applications",
-      "public_url": "https://data.surrey.ca/"
+      "name": "City of Surrey - Development Applications V2",
+      "public_url": "https://citizenportal.surrey.ca/"
+    },
+    {
+      "source_id": "surrey_planning_reports",
+      "name": "City of Surrey - Rezoning/DP In-Process Reports",
+      "public_url": "https://www.surrey.ca/city-services/2018.aspx"
     },
     {
       "source_id": "maple_ridge_devapps",
-      "name": "Maple Ridge Development Applications",
-      "public_url": "https://www.mapleridge.ca/"
+      "name": "Maple Ridge - Planning & Development",
+      "public_url": "https://geoservices.mapleridge.ca/"
     },
     {
       "source_id": "twp_langley_devactivity",
-      "name": "Township of Langley Development Activity",
+      "name": "Township of Langley - Development Activity",
       "public_url": "https://www.tol.ca/"
+    },
+    {
+      "source_id": "coquitlam_devapps",
+      "name": "Coquitlam - Development Information",
+      "public_url": "https://www.coquitlam.ca/"
+    },
+    {
+      "source_id": "van_building_permits",
+      "name": "City of Vancouver - Issued Building Permits (Open Data)",
+      "public_url": "https://opendata.vancouver.ca/"
     }
   ],
   "acceptance": {
     "preset_id": "civil_contractor",
-    "min_records_fit_ge_60": 4,
+    "min_records_fit_ge_60": 15,
     "per_record": {
-      "SNAP-001": {
-        "min_fit": 80,
-        "max_fit": 100,
-        "tier": "HIGH"
-      },
-      "SNAP-002": {
-        "min_fit": 80,
-        "max_fit": 100,
-        "tier": "HIGH"
-      },
-      "SNAP-003": {
-        "min_fit": 80,
-        "max_fit": 100,
-        "tier": "HIGH"
-      },
-      "SNAP-004": {
-        "min_fit": 55,
-        "max_fit": 100,
-        "tier": "MEDIUM"
-      },
-      "SNAP-005": {
-        "min_fit": 70,
-        "max_fit": 100,
-        "tier": "HIGH"
-      },
-      "SNAP-006": {
-        "min_fit": 0,
-        "max_fit": 20,
+      "SURREY-26-13067-101-B-AVE": {
+        "min_fit": 39,
+        "max_fit": 49,
         "tier": "LOW"
       },
-      "SNAP-007": {
-        "min_fit": 80,
-        "max_fit": 100,
+      "SURREY-26-8964-156-A-ST": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-6438-192-ST": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-15760-CROY-DON-DR": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-3090-139-ST": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-13625-112-AVE": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-9306-BOTH-WELL-DR": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-3658-160-ST": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-14333-104-AVE": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-26-2966-164-ST": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "SURREY-15021800": {
+        "min_fit": 66,
+        "max_fit": 76,
         "tier": "HIGH"
       },
-      "SNAP-008": {
-        "min_fit": 0,
+      "SURREY-15035700": {
+        "min_fit": 66,
+        "max_fit": 76,
+        "tier": "HIGH"
+      },
+      "SURREY-17060100": {
+        "min_fit": 66,
+        "max_fit": 76,
+        "tier": "HIGH"
+      },
+      "SURREY-20004000": {
+        "min_fit": 66,
+        "max_fit": 76,
+        "tier": "HIGH"
+      },
+      "SURREY-15043500": {
+        "min_fit": 66,
+        "max_fit": 76,
+        "tier": "HIGH"
+      },
+      "SURREY-15043900": {
+        "min_fit": 66,
+        "max_fit": 76,
+        "tier": "HIGH"
+      },
+      "SURREY-15044000": {
+        "min_fit": 66,
+        "max_fit": 76,
+        "tier": "HIGH"
+      },
+      "SURREY-19032200": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "SURREY-19037000": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "SURREY-15011800": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "SURREY-19032400": {
+        "min_fit": 30,
         "max_fit": 40,
         "tier": "LOW"
+      },
+      "SURREY-19032500": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19033400": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19033500": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19033600": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19034100": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19034200": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19035200": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19035800": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "SURREY-19035900": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "COQUITLAM-23127": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "COQUITLAM-21088": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "COQUITLAM-19092": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "COQUITLAM-21188": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "COQUITLAM-20020": {
+        "min_fit": 57,
+        "max_fit": 67,
+        "tier": "HIGH"
+      },
+      "COQUITLAM-24007": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "COQUITLAM-23097": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "COQUITLAM-24184": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "COQUITLAM-18130": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "COQUITLAM-25101": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "COQUITLAM-23078": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "COQUITLAM-22099": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "COQUITLAM-25002": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "COQUITLAM-24094": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "COQUITLAM-21025": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "VANCOUVER-BP202104012": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "VANCOUVER-BP202301817": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "VANCOUVER-BP202204092": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "VANCOUVER-BP202104170": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "VANCOUVER-DB202401881": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "VANCOUVER-DB202404337": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "VANCOUVER-DB202502486": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "VANCOUVER-BP202302802": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-622750": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-621970": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-621311": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-620051": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-619217": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-619203": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-618775": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-621959": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-621161": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-620388": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-620162": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-619362": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-618644": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "MAPLE-RIDGE-618631": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-RZ100681": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-RZ100790": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-DP101489": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-SA101397": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-DP101521": {
+        "min_fit": 39,
+        "max_fit": 49,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-RO100301": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-RZ100711": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-RO100324": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-DP101462": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-SA101399": {
+        "min_fit": 30,
+        "max_fit": 40,
+        "tier": "LOW"
+      },
+      "TWP-LANGLEY-RZ100532": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "TWP-LANGLEY-DP101013": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "TWP-LANGLEY-DP101443": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "TWP-LANGLEY-DP101508": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
+      },
+      "TWP-LANGLEY-DP101374": {
+        "min_fit": 48,
+        "max_fit": 58,
+        "tier": "MEDIUM"
       }
     }
   }
