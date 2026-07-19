@@ -222,6 +222,53 @@ def test_never_writes_inside_package() -> None:
         assert str(REPO_ROOT.resolve()) not in str(dataset_path)
 
 
+def test_dataset_writer_neutralizes_formula_injection() -> None:
+    """Public-source fields must never be interpreted as Excel formulas.
+
+    A hostile or malformed public record could contain a scope_summary or
+    address starting with '=', '+', '-', or '@' (the classic CSV/Excel
+    formula-injection prefixes, e.g. '=cmd|...' or '=HYPERLINK(...)'). The
+    dataset writer must always emit these as literal text.
+    """
+    import openpyxl
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp) / "dataset.xlsx"
+        malicious = [
+            {"lead_id": "L1", "municipality": "Surrey", "app_no": "A1",
+             "address": "=cmd|'/c calc'!A1", "app_type_stage": "Development Permit",
+             "scope_summary": "+1+1", "applicant_name": "@SUM(1,2)",
+             "source": "s", "source_url": "-2+3"},
+        ]
+        rs._default_dataset_writer(malicious, dest)
+        wb = openpyxl.load_workbook(dest, read_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        data_row = dict(zip(rows[0], rows[1]))
+        # every formula-prefixed value must come back with a literal-text
+        # marker, never as a live formula.
+        for field in ("address", "scope_summary", "applicant_name", "source_url"):
+            assert str(data_row[field]).startswith("'"), f"{field} was not neutralized: {data_row[field]!r}"
+
+
+def test_default_scorer_neutralizes_formula_injection() -> None:
+    import openpyxl
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dataset_path = Path(tmp) / "dataset.xlsx"
+        out_dir = Path(tmp) / "output"
+        rs._default_dataset_writer(
+            [{"lead_id": "L1", "municipality": "Surrey", "scope_summary": "=HYPERLINK(\"http://evil\")"}],
+            dataset_path,
+        )
+        score = rs.default_scorer(dataset_path, out_dir, preset_id="civil_contractor", package_root=REPO_ROOT)
+        wb = openpyxl.load_workbook(score.output_path, read_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        data_row = dict(zip(rows[0], rows[1]))
+        assert str(data_row["scope_summary"]).startswith("'")
+
+
 # --------------------------------------------------------------------------- #
 # Full-sweep acquirer (Gap A fix): must NOT be the bounded connector preview.
 # tenderfinder_raw_sweep.run_connector is monkeypatched so these tests remain

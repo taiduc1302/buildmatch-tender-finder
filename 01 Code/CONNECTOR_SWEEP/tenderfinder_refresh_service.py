@@ -225,8 +225,17 @@ def validate_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _default_dataset_writer(records: list[dict[str, Any]], dest: Path) -> Path:
-    """Write normalized records to a simple review-format workbook."""
+    """Write normalized records to a simple review-format workbook.
+
+    Record values come from public source websites/feeds and are therefore
+    untrusted for workbook-formula-injection purposes (a scope_summary or
+    address field could contain a leading ``=``/``+``/``-``/``@``); they are
+    written through ``append_untrusted_row`` so Excel always treats them as
+    literal text, never as a formula.
+    """
     import openpyxl
+
+    from tenderfinder_excel_safety import append_untrusted_row
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -237,7 +246,7 @@ def _default_dataset_writer(records: list[dict[str, Any]], dest: Path) -> Path:
     ]
     ws.append(headers)
     for record in records:
-        ws.append([record.get(h, "") for h in headers])
+        append_untrusted_row(ws, [record.get(h, "") for h in headers])
     dest.parent.mkdir(parents=True, exist_ok=True)
     wb.save(dest)
     return dest
@@ -294,6 +303,7 @@ def default_scorer(
     import openpyxl
 
     import tenderfinder_guards as _guards
+    from tenderfinder_excel_safety import append_untrusted_row
     from tenderfinder_keywords_config import clear_keywords_cache as _clear
     from tenderfinder_presets import resolve_preset_keywords_path
 
@@ -344,7 +354,11 @@ def default_scorer(
     ]
     ws.append(headers)
     for rank, row in enumerate(scored_rows, start=1):
-        ws.append([rank] + [row.get(h, "") for h in headers[1:]])
+        # rank/fit_score/bucket are our own computed values (safe); the
+        # remaining fields are public source data and go through the
+        # untrusted-cell guard so a value like "=cmd|..." is never
+        # interpreted as a formula.
+        append_untrusted_row(ws, [rank] + [row.get(h, "") for h in headers[1:]])
     wb.save(out_path)
 
     return ScoreResult(
