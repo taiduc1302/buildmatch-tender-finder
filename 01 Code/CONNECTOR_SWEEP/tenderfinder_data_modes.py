@@ -338,9 +338,9 @@ class RunMetrics:
             errors.append(
                 "sources_successful + sources_failed exceeds sources_attempted"
             )
-        if not self.succeeded and (self.records_fetched or self.records_live):
+        if not self.succeeded and self.records_live:
             errors.append(
-                "a failed run must not report fetched/live records as its own result"
+                "a failed run must not report live records as its own promoted result"
             )
         return errors
 

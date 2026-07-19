@@ -180,9 +180,27 @@ def _record_key(record: dict[str, Any]) -> tuple[str, str, str]:
     )
 
 
+def _is_descriptive(record: dict[str, Any]) -> bool:
+    return any(record.get(key) for key in ("address", "title", "tender_title", "scope_summary"))
+
+
 def deduplicate_records(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Deduplicate by (source, app_no/lead_id, address/title/url) and drop
+    non-descriptive stub records (no address/title/scope_summary) that carry
+    no scoreable signal for the estimator.
+
+    Real municipal open-data feeds routinely include a handful of thin/stub
+    rows (e.g. an application number with every other field blank) alongside
+    otherwise rich records; those stubs are noise, not a reason to reject an
+    entire dataset (see ``validate_dataset``). Both duplicates and dropped
+    stubs are reported together as ``removed`` — the truthful-metrics
+    invariant ``normalized_records == records_before_dedup - duplicates_removed``
+    holds either way.
+    """
     seen: dict[tuple[str, str, str], dict[str, Any]] = {}
     for record in records:
+        if not _is_descriptive(record):
+            continue
         key = _record_key(record)
         if key not in seen:
             seen[key] = record
@@ -191,13 +209,13 @@ def deduplicate_records(records: list[dict[str, Any]]) -> tuple[list[dict[str, A
 
 
 def validate_dataset(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Dataset-level validation. Per-record content quality (descriptive
+    fields) is already enforced by ``deduplicate_records`` filtering out
+    non-descriptive stubs before this runs — one thin record must never fail
+    an otherwise-good dataset of hundreds of real records."""
     errors: list[str] = []
     if not records:
         errors.append("dataset is empty")
-    for index, record in enumerate(records):
-        if not any(record.get(key) for key in ("address", "title", "tender_title", "scope_summary")):
-            errors.append(f"record {index} has no descriptive field")
-            break
     return {"passed": not errors, "errors": errors}
 
 
@@ -223,6 +241,128 @@ def _default_dataset_writer(records: list[dict[str, Any]], dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     wb.save(dest)
     return dest
+
+
+def _read_records_for_scoring(dataset_path: Path) -> list[dict[str, Any]]:
+    """Read back the records written by ``_default_dataset_writer`` (or a CSV
+    with the same column names) so ``default_scorer`` can score them."""
+    suffix = dataset_path.suffix.casefold()
+    if suffix == ".csv":
+        import csv
+
+        with dataset_path.open(encoding="utf-8") as handle:
+            return list(csv.DictReader(handle))
+    import openpyxl
+
+    wb = openpyxl.load_workbook(dataset_path, read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return []
+    headers = [str(h) if h is not None else "" for h in rows[0]]
+    return [dict(zip(headers, row)) for row in rows[1:]]
+
+
+# Fit-score thresholds mirroring the deterministic routing used elsewhere in
+# the product (tenderfinder_demo_three_buckets._rescore_route / GUI ranked
+# opportunities): >=60 -> BID_LATER-equivalent, >=50 -> WATCH-equivalent, else
+# SKIP. BID_NOW is a live-tender-track (Track B) concept; a development-only
+# refresh never populates it, and reporting bid_now=0 here is truthful, not a
+# bug — development-application leads are never live tenders.
+_BID_LATER_MIN_FIT = 60
+_WATCH_MIN_FIT = 50
+
+
+def default_scorer(
+    dataset_path: Path,
+    out_dir: Path,
+    *,
+    preset_id: str = "civil_contractor",
+    package_root: str | Path | None = None,
+) -> ScoreResult:
+    """Real deterministic scorer for the development-refresh dataset.
+
+    Reads every record back from the written dataset, scores it under the
+    active contractor preset with the same scoring engine used everywhere
+    else in the product (``tenderfinder_guards.score_civil_fit_breakdown``),
+    buckets it, and writes a ranked output workbook sorted by fit score
+    descending. This is what makes "Refresh Development Data" truthfully
+    report BID LATER / WATCH / SKIP counts instead of permanent zeros.
+    """
+    import os as _os
+
+    import openpyxl
+
+    import tenderfinder_guards as _guards
+    from tenderfinder_keywords_config import clear_keywords_cache as _clear
+    from tenderfinder_presets import resolve_preset_keywords_path
+
+    records = _read_records_for_scoring(dataset_path)
+    previous = _os.environ.get("TENDER_FINDER_KEYWORDS_CONFIG")
+    _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = str(
+        resolve_preset_keywords_path(preset_id, root=package_root)
+    )
+    try:
+        scored_rows: list[dict[str, Any]] = []
+        bid_later = watch = skip = 0
+        for record in records:
+            text = " ".join(
+                str(record.get(key, ""))
+                for key in ("scope_summary", "app_type_stage", "address")
+            )
+            _clear()
+            breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
+            fit = breakdown["fit_score"]
+            if fit >= _BID_LATER_MIN_FIT:
+                bucket = "BID_LATER"
+                bid_later += 1
+            elif fit >= _WATCH_MIN_FIT:
+                bucket = "WATCH"
+                watch += 1
+            else:
+                bucket = "SKIP"
+                skip += 1
+            scored_rows.append({**record, "fit_score": fit, "bucket": bucket})
+    finally:
+        if previous is None:
+            _os.environ.pop("TENDER_FINDER_KEYWORDS_CONFIG", None)
+        else:
+            _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = previous
+        _clear()
+
+    scored_rows.sort(key=lambda row: row["fit_score"], reverse=True)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "ranked_opportunities.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ranked_Opportunities"
+    headers = [
+        "rank", "fit_score", "bucket", "lead_id", "municipality", "app_no",
+        "address", "app_type_stage", "scope_summary", "applicant_name",
+        "source", "source_url",
+    ]
+    ws.append(headers)
+    for rank, row in enumerate(scored_rows, start=1):
+        ws.append([rank] + [row.get(h, "") for h in headers[1:]])
+    wb.save(out_path)
+
+    return ScoreResult(
+        output_path=str(out_path), scored=len(scored_rows), bid_now=0,
+        bid_later=bid_later, watch=watch, skip=skip,
+    )
+
+
+def make_default_scorer(request: RefreshRequest) -> Callable[[Path, Path], ScoreResult]:
+    """Build a ready-to-call scorer bound to this request's preset. Passed to
+    ``refresh_development_data`` for a real production refresh."""
+
+    def _score(dataset_path: Path, out_dir: Path) -> ScoreResult:
+        return default_scorer(
+            dataset_path, out_dir, preset_id=request.preset_id, package_root=request.package_root
+        )
+
+    return _score
 
 
 def diagnostic_preview_acquirer(
@@ -473,7 +613,11 @@ def refresh_development_data(
     validation = validate_dataset(deduped)
     metrics.duplicates_removed = duplicates_removed
     metrics.normalized_records = len(deduped)
-    metrics.records_live = len(deduped)
+    # records_live is set only once the dataset is actually promoted (below) -
+    # records_fetched/normalized_records are truthful acquisition diagnostics
+    # that must be reported even when a later step (validation, promotion)
+    # fails, but records_live specifically means "live in the active dataset
+    # as a result of THIS run" and must stay 0 until that is actually true.
 
     if not validation["passed"]:
         metrics.succeeded = False
@@ -523,6 +667,7 @@ def refresh_development_data(
     metrics.capture_timestamp = capture_ts
     metrics.data_mode = dm.MODE_LIVE
     metrics.stale = False
+    metrics.records_live = len(deduped)
 
     # Score the promoted dataset into a ranked output workbook.
     output_paths: dict[str, Any] = {"dataset": str(dataset_path)}

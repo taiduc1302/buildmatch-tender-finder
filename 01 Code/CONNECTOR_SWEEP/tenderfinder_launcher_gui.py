@@ -2100,7 +2100,12 @@ class TenderFinderLauncherApp:
                 acquirer = refresh_service.make_full_sweep_acquirer(
                     request, package_root=ROOT_DIR, run_id=run_id
                 )
-                result = refresh_service.refresh_development_data(request, acquirer=acquirer)
+                # Real deterministic scoring + ranked output workbook (not a
+                # no-op) so BID LATER / WATCH / SKIP counts are truthful.
+                scorer = refresh_service.make_default_scorer(request)
+                result = refresh_service.refresh_development_data(
+                    request, acquirer=acquirer, scorer=scorer
+                )
                 self._refresh_result_queue.put(("ok", result))
             except Exception as exc:  # noqa: BLE001 - surface any failure to the user
                 self._refresh_result_queue.put(("error", str(exc)))

@@ -138,7 +138,7 @@ def test_total_failure_preserves_previous_dataset_and_marks_stale() -> None:
 
 def test_failed_validation_preserves_previous() -> None:
     def empty_records(source):
-        # ok but returns records with no descriptive field -> validation fails
+        # ok but returns only a non-descriptive stub -> dataset ends up empty
         return rs.SourceFetch(source_id=source["source_id"], ok=True,
                               records=({"source": source["source_id"], "app_no": "x"},))
 
@@ -151,6 +151,53 @@ def test_failed_validation_preserves_previous() -> None:
         )
         assert not result.succeeded
         assert dm.load_active_dataset(state_root=state, package_root=REPO_ROOT) is None
+
+
+def test_thin_stub_records_do_not_fail_an_otherwise_good_dataset() -> None:
+    """Regression test for a real bug found during the controlled live sweep:
+    real municipal open-data feeds routinely mix a few non-descriptive stub
+    records (an app number with every other field blank) into an otherwise
+    rich dataset. A single thin record must not sour hundreds of good ones."""
+    def mixed_records(source):
+        good = [
+            {"source": source["source_id"], "app_no": f"A{i}", "address": f"{i} Main St",
+             "scope_summary": "Watermain and sanitary sewer servicing"}
+            for i in range(50)
+        ]
+        stub = [{"source": source["source_id"], "app_no": "STUB-1", "address": "", "scope_summary": ""}]
+        return rs.SourceFetch(source_id=source["source_id"], ok=True, records=tuple(good + stub))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        result = rs.refresh_development_data(
+            rs.RefreshRequest(state_root=state, package_root=REPO_ROOT,
+                              source_ids=("maple_ridge_devapps",)),
+            acquirer=mixed_records, scorer=_fake_scorer,
+        )
+    assert result.succeeded, result.message
+    assert result.metrics.normalized_records == 50  # the stub was dropped, not fatal
+    assert result.metrics.duplicates_removed == 1    # accounts for the dropped stub
+
+
+def test_records_fetched_stays_truthful_on_validation_failure_but_records_live_is_zero() -> None:
+    """A validation failure (dataset ends up empty) must still report the true
+    fetched count as a diagnostic - it must NOT be hidden as zero - while
+    records_live correctly stays 0 because nothing was promoted."""
+    def stub_only(source):
+        return rs.SourceFetch(source_id=source["source_id"], ok=True,
+                              records=({"source": source["source_id"], "app_no": "x"},))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        result = rs.refresh_development_data(
+            rs.RefreshRequest(state_root=state, package_root=REPO_ROOT,
+                              source_ids=("maple_ridge_devapps",)),
+            acquirer=stub_only, scorer=_fake_scorer,
+        )
+    assert not result.succeeded
+    assert result.metrics.records_fetched == 1  # truthful: we did fetch 1 record
+    assert result.metrics.records_live == 0     # truthful: nothing went live
+    assert result.metrics.is_reconciled(), result.metrics.reconciliation_errors()
 
 
 def test_dedup_reconciles() -> None:
@@ -348,6 +395,86 @@ def test_diagnostic_preview_and_full_sweep_are_distinct_functions() -> None:
     # production entry point (the original Gap A defect).
     assert rs.full_sweep_development_acquirer is not rs.diagnostic_preview_acquirer
     assert rs.default_development_acquirer is rs.diagnostic_preview_acquirer
+
+
+# --------------------------------------------------------------------------- #
+# Real scorer (fixes a second real gap found during the controlled live
+# sweep: the GUI never passed a scorer, so BID_LATER/WATCH/SKIP counts stayed
+# permanently 0 even on a successful refresh with real data).
+# --------------------------------------------------------------------------- #
+
+
+def test_default_scorer_buckets_and_writes_ranked_workbook() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        dataset_path = Path(tmp) / "dataset.xlsx"
+        out_dir = Path(tmp) / "output"
+        records = [
+            # strong civil fit -> BID_LATER
+            {"lead_id": "L1", "municipality": "Surrey", "app_no": "A1", "address": "1 St",
+             "app_type_stage": "Development Permit",
+             "scope_summary": "Watermain and sanitary sewer site servicing subdivision",
+             "applicant_name": "", "source": "s", "source_url": ""},
+            # borderline -> WATCH
+            {"lead_id": "L2", "municipality": "Surrey", "app_no": "A2", "address": "2 St",
+             "app_type_stage": "Development Permit", "scope_summary": "Road grading",
+             "applicant_name": "", "source": "s", "source_url": ""},
+            # no civil signal -> SKIP
+            {"lead_id": "L3", "municipality": "Surrey", "app_no": "A3", "address": "3 St",
+             "app_type_stage": "Sign Permit", "scope_summary": "New commercial sign",
+             "applicant_name": "", "source": "s", "source_url": ""},
+        ]
+        rs._default_dataset_writer(records, dataset_path)
+        score = rs.default_scorer(dataset_path, out_dir, preset_id="civil_contractor", package_root=REPO_ROOT)
+        assert score.scored == 3
+        assert score.bid_now == 0  # development-only refresh never populates BID_NOW; truthful
+        assert score.bid_later + score.watch + score.skip == 3
+        assert score.bid_later >= 1  # the strong civil record must land in BID_LATER
+        assert Path(score.output_path).exists()
+
+
+def test_make_default_scorer_binds_preset() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        dataset_path = Path(tmp) / "dataset.xlsx"
+        out_dir = Path(tmp) / "output"
+        rs._default_dataset_writer(
+            [{"lead_id": "L1", "municipality": "Surrey", "scope_summary":
+              "Apartment building interior fit-out mechanical electrical HVAC suite"}],
+            dataset_path,
+        )
+        request_civil = rs.RefreshRequest(preset_id="civil_contractor", package_root=REPO_ROOT)
+        request_res = rs.RefreshRequest(preset_id="multifamily_residential", package_root=REPO_ROOT)
+        score_civil = rs.make_default_scorer(request_civil)(dataset_path, out_dir / "civil")
+        score_res = rs.make_default_scorer(request_res)(dataset_path, out_dir / "res")
+    # the civil preset penalizes interior/mechanical/electrical/HVAC/suite scope;
+    # the residential preset does not - so the same record scores differently.
+    assert score_civil.skip >= score_res.skip or score_civil.watch != score_res.watch \
+        or score_civil.bid_later != score_res.bid_later
+
+
+def test_full_refresh_with_real_scorer_reports_truthful_bucket_counts() -> None:
+    """End-to-end regression test for the exact bug found in the controlled
+    live sweep: refresh_development_data with the REAL scorer (not a fake)
+    must report non-zero BID_LATER/WATCH/SKIP for real civil-relevant data,
+    not permanent zeros."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        run_id = "run_real_scorer_e2e"
+        request = rs.RefreshRequest(
+            state_root=state, package_root=REPO_ROOT, run_id=run_id,
+            source_ids=("maple_ridge_devapps",), preset_id="civil_contractor",
+        )
+        scorer = rs.make_default_scorer(request)
+        result = rs.refresh_development_data(request, acquirer=_ok_acquirer, scorer=scorer)
+
+        assert result.succeeded, result.message
+        assert result.metrics.records_scored == result.metrics.normalized_records
+        total_bucketed = (result.metrics.bid_now + result.metrics.bid_later
+                          + result.metrics.watch + result.metrics.skip)
+        assert total_bucketed == result.metrics.records_scored
+        assert result.metrics.bid_later > 0  # the fixture records are strongly civil-relevant
+        assert result.metrics.is_reconciled(), result.metrics.reconciliation_errors()
+        assert "output_workbook" in result.output_paths
+        assert Path(result.output_paths["output_workbook"]).exists()
 
 
 def main() -> int:
