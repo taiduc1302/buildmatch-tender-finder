@@ -16,17 +16,29 @@
 
 ## Product scope
 
-- The GUI's "select a ranked opportunity" analyzes the **top-ranked** record of
-  the active dataset. A full in-GUI results grid with per-row selection is not
-  built (an intentional non-goal for the competition).
-- `default_development_acquirer` returns a **bounded normalized sample** per
-  source (via the guarded live source test), sufficient for the demo and honest
-  about provenance; it is not a full production harvest.
+- "Refresh Development Data" now runs a **real full paginated sweep**
+  (`full_sweep_development_acquirer` → `tenderfinder_raw_sweep.run_connector`),
+  not a bounded preview — proven against 8 real public sources (1,209-1,439
+  records). `diagnostic_preview_acquirer` (the old bounded ~5-record sample)
+  is retained only for source-health/diagnostic checks, not the production
+  refresh path. See `docs/buildweek/final/01_FULL_RAW_SWEEP_IMPLEMENTATION.md`.
+- The GUI's **Ranked Opportunities** tab lets the user select a specific
+  opportunity from a real table (`ttk.Treeview`); "Analyze Selected
+  Opportunity with AI" only analyzes that selection and is disabled until one
+  is made. A separate, explicitly-labelled "Analyze Top-Ranked Opportunity"
+  remains as a convenience shortcut. There is no filtering/search on the
+  table yet (an intentional, documented scope limit, not a defect).
 - Vancouver rezoning and development-permit sources remain `needs_configuration`
   until an official stable public endpoint is identified and safely tested; they
   are never selected by default and never shown as healthy.
 - BC Housing / BC Builds are out of scope unless a safe official public source
   exists.
+- The development-refresh dataset does not yet carry a manual-field concept
+  (Assigned To / Notes / manual status) that survives across refreshes — each
+  successful refresh replaces the active dataset outright. This is separate
+  from, and does not affect, the original tender-focused pipeline's existing
+  manual-triage preservation (`Assigned To`/`Status`/`Notes` surviving reruns),
+  which remains intact and tested.
 
 ## What this product does NOT do
 
