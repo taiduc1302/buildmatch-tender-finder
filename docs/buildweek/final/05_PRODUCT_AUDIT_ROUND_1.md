@@ -9,7 +9,7 @@ IMPLEMENTED BUT NOT TESTED / PARTIALLY IMPLEMENTED / BROKEN / UNKNOWN.
 
 | Question | Classification | Evidence |
 |---|---|---|
-| Does the GUI run? | VERIFIED WITH LIMITATIONS | Windows CI (`windows-latest`, real tkinter) constructs the full app including the new Ranked Opportunities Treeview and passed after fixing a real Windows-only workbook-handle bug that first CI run caught (see `06_REMEDIATION_LOG.md` item 11); interactive visual rendering itself remains unverifiable without a human at a real desktop |
+| Does the GUI run? | VERIFIED WITH LIMITATIONS | Windows CI (`windows-latest`, real tkinter) constructs the full app including the new Ranked Opportunities Treeview and passed after fixing a real Windows-only workbook-handle bug that first CI run caught (see `06_REMEDIATION_LOG.md` item 11); real screenshots (`final/evidence/*.png`) now show it actually rendering under Python 3.12 + real tkinter/X11 (Linux, not Windows), including a live 82-record load and a non-top-ranked row selection enabling the AI button — genuine additional evidence, though a human's interactive use on real Windows remains unverified |
 | Does full refresh work? | VERIFIED OPERATIONAL | Real controlled sweep: 8/8 sources, 1,209-1,439 records across 3 runs |
 | Does it retrieve full records? | VERIFIED OPERATIONAL | Real pagination confirmed (`[arcgis] batch=1 offset=0 fetched=200`), 1,209 normalized records, not a preview |
 | Does scoring run automatically? | VERIFIED OPERATIONAL (fixed this session — was previously not wired) | Run 3: 104/531/574 bucket counts from real data |
@@ -54,7 +54,7 @@ IMPLEMENTED BUT NOT TESTED / PARTIALLY IMPLEMENTED / BROKEN / UNKNOWN.
 |---|---|---|
 | Clean package | VERIFIED OPERATIONAL | `build_clean_release.py` PASS, 117 deterministic entries |
 | Reproducible setup | VERIFIED OPERATIONAL | `requirements.txt` now correctly declares `openai` (fixed this session) |
-| Windows startup | UNKNOWN (external blocker) | No Windows runtime available to verify interactively |
+| Windows startup | VERIFIED WITH LIMITATIONS (was UNKNOWN) | Real Windows CI passes; a real `pwsh` + tkinter/X11 run on Linux exercises the same headless-verifiable steps and produces the identical release SHA256 as the plain-Python run; the `.bat` launchers and a human's interactive startup on real Windows remain unverified — see `02_WINDOWS_ACCEPTANCE_RESULTS.md` |
 | Documentation | VERIFIED OPERATIONAL | Stale claims (auto-pick AI, 8-record snapshot) corrected this session |
 | Limitations | VERIFIED OPERATIONAL | `docs/buildweek/09_KNOWN_LIMITATIONS.md` + this document set are truthful about what remains unverified |
 | PR state | VERIFIED OPERATIONAL | PR #3 open, draft, mergeable — see `07_REMOTE_PR_AUDIT.md` |

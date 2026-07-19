@@ -7,11 +7,19 @@
 Two genuine, conclusively-documented external blockers remain, neither of
 which this session's environment can resolve:
 
-1. **No `OPENAI_API_KEY`** anywhere in this environment — the live OpenAI
-   smoke test cannot be executed. See `04_LIVE_OPENAI_RESULTS.md`.
-2. **No Windows desktop / `pwsh`** in this environment — interactive GUI
-   acceptance and running `windows_acceptance.ps1` on real Windows cannot be
-   executed. See `02_WINDOWS_ACCEPTANCE_RESULTS.md`.
+1. **No `OPENAI_API_KEY`** anywhere in this environment, and no OpenAI
+   connector attached to this session (`ListConnectors` returns none) — the
+   live OpenAI smoke test cannot be executed. This is a real credential only
+   the founder holds; it cannot be produced from within this session by any
+   legitimate means. See `04_LIVE_OPENAI_RESULTS.md`.
+2. **No Windows desktop** in this environment. A follow-up pass in this
+   session installed real PowerShell 7 (via Microsoft's own apt repo, not
+   GitHub) and exercised a real `tkinter`/X11 display (`Xvfb`) to actually
+   construct and screenshot the running GUI — see the "Update" section at
+   the top of `02_WINDOWS_ACCEPTANCE_RESULTS.md` and
+   `final/evidence/*.png`. This substantially narrows but does not close the
+   gap: it is still Linux, not Windows, so NTFS-specific behaviour and a
+   human's actual interactive use remain unverified.
 
 Everything else the task required is done and verified:
 

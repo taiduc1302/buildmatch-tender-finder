@@ -13,14 +13,15 @@ session's remediation and remote CI verification (see `07_REMOTE_PR_AUDIT.md`).
 | Deterministic/AI architecture | 9 | Deterministic score/bucket/matched-terms are read-only inputs to the AI prompt; AI never mutates them; disagreement is a distinct, surfaced state (`HUMAN_REVIEW`), not silently resolved either way; tested | none significant | High |
 | Development story (Claude Code) | 9 | Two full sessions: recovery from a non-existent prior commit, systematic gap-closing, and — the strongest evidence — a real controlled live sweep that found and fixed 5 genuine defects synthetic tests could not have caught, all documented with real logs, not asserted | -1: the story is not itself packaged into demo-ready narrative material (e.g. a slide) | High |
 | Construction user value | 8 | Solves a real, named pain point (manual CLI + copy-paste for development-application review) with a one-click refresh, truthful metrics, and contractor-specific ranking (104 vs 246 vs 144 BID_LATER opportunities across presets on the same real data) | -2: no real estimator has used it; value is inferred, not observed | Medium |
-| UX | 6 | Ranked Opportunities table, disabled-until-selected AI button, persistent data-mode banner are sound patterns | -2: interactive visual polish (layout, spacing, dialog wording) unverified by a human at a real desktop; -2: no filtering/search, no pagination for very large (1,000+ record) result sets | Low-medium (no human has seen it render) |
+| UX | 7 | Ranked Opportunities table, disabled-until-selected AI button, persistent data-mode banner — now backed by real screenshots of the actually-rendered app (`final/evidence/*.png`, real tkinter + X11, not a mockup), showing the banner, disabled state, a real 82-record load, and row #2 (not #1) selected with its own evidence and an enabled AI button | -1: real screenshots exist but on Linux/X11, not a real Windows desktop; -2: no filtering/search, no pagination for very large (1,000+ record) result sets | Medium (real rendering evidence exists; still no human interaction on real Windows) |
 | Live data credibility | 8 | Real, reproducible controlled sweep against 6 named public BC municipal feeds, with per-source counts, HTTP statuses, and a genuine defect trail | -2: not a 24/7 continuously-updated dataset (by design, and correctly not claimed as one) | High |
 | Demo reliability | 8 | Runs fully offline against 82 real records with no live-site dependency; fallback behaviour for a down source or unavailable OpenAI is documented | -2: never actually rehearsed by a human in front of an audience | Medium |
 | Security | 8 | No secrets/PII in the snapshot (verified + tested), formula-injection guard applied to all new writers, prompt-injection hardening, API key never logged/cached, safe-path enforcement, source-safety gating before any fetch | -2: no external/third-party penetration test; internal adversarial review only | Medium-high |
 | Documentation | 9 | 21 Build Week docs (11 from the prior session + 10 `final/` docs this session), all reconciled against actual code behaviour, with stale claims found and corrected twice this session | -1: some docs slightly redundant across the two doc sets (historical vs. final) | High |
 | Submission readiness | 7 | PR #3 open, mergeable, real CI green, no unresolved review comments, no secrets, no unrelated files | -2: two genuine external blockers (live OpenAI, interactive Windows) remain unresolved and require the founder's own credentials/machine; -1: not yet marked ready-for-review (deliberately left as the founder's decision) | High |
 
-**Average: 7.9 / 10**
+**Average: 8.0 / 10** (updated from 7.9 after the UX score moved 6→7 on real
+rendering evidence; see `02_WINDOWS_ACCEPTANCE_RESULTS.md`)
 
 ## Final recommendation
 
@@ -34,9 +35,11 @@ before that claim is honest:
    entire "OpenAI value" and part of "verified functionality" scores are
    capped until this happens (5 minutes of work: set the key, run the opt-in
    smoke test in `docs/buildweek/final/04_LIVE_OPENAI_RESULTS.md`).
-2. A human actually looking at the running GUI on Windows — the "UX" score is
-   capped at 6 specifically because no one has seen it render (10-15 minutes:
-   `Launch_TENDER_FINDER_GUI.bat`, walk the checklist in
+2. A human actually using the running GUI on real Windows — real screenshots
+   now exist (`final/evidence/*.png`, captured via a genuine tkinter/X11
+   render on Linux), so this is no longer "nobody has seen it render," but a
+   human has still never clicked through it on the actual target OS
+   (10-15 minutes: `Launch_TENDER_FINDER_GUI.bat`, walk the checklist in
    `docs/buildweek/08_WINDOWS_ACCEPTANCE.md`).
 
 Both are fast, low-risk, and entirely within the founder's control. Once
