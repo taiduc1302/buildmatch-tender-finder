@@ -193,7 +193,18 @@ def gather_release_files() -> list[Path]:
     files.update(_existing(path for path in (code_dir / "data").rglob("*") if path.is_file()))
     tests_dir = code_dir / "tests"
     files.update(_existing(tests_dir / name for name in sorted(SELF_TEST_FILES)))
-    files.update(_existing(path for path in (tests_dir / "fixtures").rglob("*") if path.is_file()))
+    # Ship test fixtures, but never forbidden-suffix files (e.g. synthetic
+    # ``.eml`` samples used only by the developer pytest suite). The release
+    # must stay ``.eml``-free so a real inbox message can never leak into a
+    # package; the loud ``_safe_relative`` guard still protects everything that
+    # IS shipped.
+    files.update(
+        _existing(
+            path
+            for path in (tests_dir / "fixtures").rglob("*")
+            if path.is_file() and path.suffix.casefold() not in FORBIDDEN_SUFFIXES
+        )
+    )
     files.update(_existing([tests_dir / "offline_guard" / "sitecustomize.py"]))
     return sorted(files, key=lambda path: _safe_relative(path).casefold())
 

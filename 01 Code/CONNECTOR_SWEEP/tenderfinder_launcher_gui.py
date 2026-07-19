@@ -614,10 +614,17 @@ class DemoBuildWorker:
         terminated = True
         if self.proc is not None:
             terminated = terminate_process_tree(self.proc)
-        if self.tee is not None and not self._log_written:
-            self._log_written = True
-            self.tee.put("USER_STOPPED: the Stop button was clicked; the build was "
-                         "terminated intentionally, this is not a crash.")
+        if self.tee is not None:
+            if not self._log_written:
+                self._log_written = True
+                self.tee.put("USER_STOPPED: the Stop button was clicked; the build was "
+                             "terminated intentionally, this is not a crash.")
+            # Persist the stop log here (idempotent overwrite) BEFORE the
+            # partial-marker check below. The worker thread's _run() may also
+            # write it, so relying only on `_log_written` created a race where
+            # stop() could reach the iterdir() check before the file existed and
+            # skip the partial marker. Writing unconditionally makes the marker
+            # deterministic regardless of which thread wins.
             write_error_log(self.out_dir, self.tee.lines)
         try:
             if self.out_dir.exists() and any(self.out_dir.iterdir()):

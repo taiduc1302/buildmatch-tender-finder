@@ -6,6 +6,9 @@ __pycache__/
 user_data/
 demo_history/
 *.eml
+# ...except the sanitized synthetic email-alert fixtures used by the offline
+# test suite. These are fictitious sample messages with no real inbox content.
+!01 Code/CONNECTOR_SWEEP/tests/fixtures/email_alerts/*.eml
 *.db
 *.sqlite
 *.sqlite3

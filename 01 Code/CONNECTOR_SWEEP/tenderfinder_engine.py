@@ -1446,6 +1446,15 @@ def test_source_definition(
     return result
 
 
+# ``test_source_definition`` is a runtime source-connector entry point, not a
+# pytest test.  Its ``test_`` prefix (kept for backwards-compatible callers)
+# would otherwise be auto-collected by pytest wherever the symbol is imported
+# into a test module's namespace, producing a spurious "fixture 'source_id' not
+# found" collection error.  The marker below opts it out of collection without
+# changing the public name or signature.
+test_source_definition.__test__ = False
+
+
 def validate_runtime_configuration(*, root: Path | None = None) -> dict[str, Any]:
     package_root = detect_package_root(root).resolve()
     keywords = load_keywords_config(root=package_root, force_reload=True)
