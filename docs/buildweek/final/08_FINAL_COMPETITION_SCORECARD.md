@@ -2,6 +2,11 @@
 
 > AI-tool attribution note: this document describes work done by Claude Code during this session. For the full, honest Codex/GPT-5.6/Claude Code contribution breakdown required by the OpenAI Build Week rules, see the README's "AI tool and contributor disclosure" section and `docs/buildweek/final/CLAIMS_LEDGER.md` — this document alone should not be read as claiming Claude Code built the project's core functionality.
 
+> Historical, subjective scorecard rather than current acceptance evidence.
+> See [`docs/PR3_VERIFIED_HANDOFF.md`](../../PR3_VERIFIED_HANDOFF.md) for verified
+> facts and the remaining owner-only gates. Devpost is authoritative for full
+> competition rules and eligibility.
+
 Scores 0-10 with evidence, deductions, and confidence. Written after this
 session's remediation and remote CI verification (see `07_REMOTE_PR_AUDIT.md`).
 

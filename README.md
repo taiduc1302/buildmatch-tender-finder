@@ -275,6 +275,38 @@ Local equivalent:
 
 Or double-click `verify_package.bat`.
 
+For the complete developer suite, install the test-only requirements and run
+pytest from the connector directory:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r "01 Code\CONNECTOR_SWEEP\requirements-dev.txt"
+Push-Location "01 Code\CONNECTOR_SWEEP"
+..\..\.venv\Scripts\python.exe -m pytest tests\ -q
+Pop-Location
+```
+
+The live OpenAI smoke test is opt-in and is skipped by default. All other
+tests are offline and must not contact tender portals.
+
+## Offline Public Snapshot demo
+
+Promote the checked-in, sanitized snapshot without contacting a live source:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, r'01 Code\CONNECTOR_SWEEP'); import tenderfinder_snapshot as s; print(s.promote_snapshot(root='.'))"
+```
+
+Then launch `Launch_TENDER_FINDER_GUI.bat`, open **Ranked Opportunities**, and
+click **Load / Refresh Ranked List**. Select a row before using the optional AI
+action. Configure AI only in the current process environment:
+
+```powershell
+$env:OPENAI_API_KEY = "<your key>"
+$env:OPENAI_MODEL = "gpt-5.6"  # optional; this is the default
+```
+
+Never save the key in repository files, workbooks, manifests, or logs.
+
 ## Clean source release
 
 Build the deterministic allowlist ZIP outside the repository:

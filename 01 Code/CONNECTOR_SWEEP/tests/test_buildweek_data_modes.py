@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import tenderfinder_data_modes as dm  # noqa: E402
+from tenderfinder_runtime import atomic_write_json  # noqa: E402
 
 
 def _dataset(tmp: Path, *, mode: str = dm.MODE_LIVE, total: int = 5, valid: bool = True,
@@ -216,6 +218,17 @@ def test_atomic_pointer_replacement_leaves_no_tmp() -> None:
         assert dm.promote_dataset(_dataset(Path(tmp), dataset_id="x"), state_root=state).promoted
         leftovers = list((state / "datasets").glob("*.tmp"))
         assert not leftovers
+
+
+def test_atomic_json_writer_is_safe_for_concurrent_writers() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "shared.json"
+        payloads = [{"writer": i, "content": "x" * (1000 + i)} for i in range(32)]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(lambda payload: atomic_write_json(target, payload), payloads))
+
+        assert json.loads(target.read_text(encoding="utf-8")) in payloads
+        assert not list(Path(tmp).glob("*.tmp"))
 
 
 def test_packaged_synthetic_detection() -> None:

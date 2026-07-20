@@ -136,6 +136,48 @@ def test_total_failure_preserves_previous_dataset_and_marks_stale() -> None:
         assert not failed.metrics.records_live  # a failed run reports no live records
 
 
+def test_scoring_failure_does_not_promote_candidate_dataset() -> None:
+    """Promotion is the refresh commit point, so scoring must finish first."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        good = rs.refresh_development_data(
+            rs.RefreshRequest(
+                state_root=state,
+                package_root=REPO_ROOT,
+                run_id="known_good",
+                source_ids=("maple_ridge_devapps",),
+            ),
+            acquirer=_ok_acquirer,
+            scorer=_fake_scorer,
+        )
+        assert good.succeeded
+        known_good = dm.load_active_dataset(state_root=state, package_root=REPO_ROOT)
+        assert known_good is not None
+
+        def scoring_failure(dataset_path: Path, out_dir: Path) -> rs.ScoreResult:
+            raise RuntimeError("scoring workbook could not be written")
+
+        failed = rs.refresh_development_data(
+            rs.RefreshRequest(
+                state_root=state,
+                package_root=REPO_ROOT,
+                run_id="scoring_failed",
+                source_ids=("maple_ridge_devapps",),
+            ),
+            acquirer=_ok_acquirer,
+            scorer=scoring_failure,
+        )
+
+        assert not failed.succeeded
+        assert failed.stale
+        assert failed.metrics.records_live == 0
+        assert "deterministic scoring failed" in failed.metrics.errors[0]
+        assert Path(failed.manifest_path).exists()
+        still_active = dm.load_active_dataset(state_root=state, package_root=REPO_ROOT)
+        assert still_active is not None
+        assert still_active.dataset_id == known_good.dataset_id
+
+
 def test_failed_validation_preserves_previous() -> None:
     def empty_records(source):
         # ok but returns only a non-descriptive stub -> dataset ends up empty

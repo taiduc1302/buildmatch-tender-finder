@@ -4,14 +4,14 @@ This is the GUI-independent controller behind the "Refresh Development Data"
 action. It reads eligible sources from the truthful registry (excluding
 manual_only / needs_configuration / wrong_source / blocked / disabled), acquires
 records via a safe acquirer, normalizes and deduplicates them, validates the
-result, writes a timestamped external dataset, promotes it atomically as the
-active dataset, scores it into a ranked output workbook, writes a run manifest,
-and returns a truthful ``RunMetrics`` object.
+result, writes a timestamped external candidate dataset, scores it into a
+ranked output workbook, promotes it atomically only after scoring succeeds,
+writes a run manifest, and returns a truthful ``RunMetrics`` object.
 
-Failure behaviour is explicit: on total failure (or a failed dataset validation)
-the previous active dataset is preserved, its last-successful timestamp is not
-advanced, it is labelled cached/stale, and the packaged synthetic input under
-``inputs/`` is never overwritten.
+Failure behaviour is explicit: on total failure, failed dataset validation, or
+failed deterministic scoring, the previous active dataset is preserved, its
+last-successful timestamp is not advanced, it is labelled cached/stale, and the
+packaged synthetic input under ``inputs/`` is never overwritten.
 
 The heavy steps (acquire, write-dataset, score-and-build) are injectable so the
 whole flow is testable headlessly with no network and no real workbook engine.
@@ -678,6 +678,34 @@ def refresh_development_data(
         last_successful_refresh=capture_ts,
     )
 
+    # Score the candidate before promotion.  Promotion is the commit point for
+    # a refresh: if deterministic scoring fails, the previous active dataset
+    # and its ranked output must remain authoritative.
+    output_paths: dict[str, Any] = {"dataset": str(dataset_path)}
+    if scorer is not None:
+        out_dir = datasets_dir / "runs" / run_id / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            score = scorer(dataset_path, out_dir)
+        except Exception as exc:
+            metrics.succeeded = False
+            metrics.data_mode = dm.MODE_UNKNOWN
+            metrics.errors = (f"deterministic scoring failed: {exc}",)
+            metrics.run_ended = timestamp_now()
+            return _failure(
+                request,
+                metrics,
+                tuple(outcomes),
+                "Refresh failed during deterministic scoring. Previous data retained.",
+                package_root,
+            )
+        metrics.records_scored = score.scored
+        metrics.bid_now = score.bid_now
+        metrics.bid_later = score.bid_later
+        metrics.watch = score.watch
+        metrics.skip = score.skip
+        output_paths["output_workbook"] = score.output_path
+
     promotion = dm.promote_dataset(
         provenance, state_root=request.state_root, package_root=package_root
     )
@@ -695,19 +723,6 @@ def refresh_development_data(
     metrics.data_mode = dm.MODE_LIVE
     metrics.stale = False
     metrics.records_live = len(deduped)
-
-    # Score the promoted dataset into a ranked output workbook.
-    output_paths: dict[str, Any] = {"dataset": str(dataset_path)}
-    if scorer is not None:
-        out_dir = datasets_dir / "runs" / run_id / "output"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        score = scorer(dataset_path, out_dir)
-        metrics.records_scored = score.scored
-        metrics.bid_now = score.bid_now
-        metrics.bid_later = score.bid_later
-        metrics.watch = score.watch
-        metrics.skip = score.skip
-        output_paths["output_workbook"] = score.output_path
 
     metrics.succeeded = True
     metrics.run_ended = timestamp_now()

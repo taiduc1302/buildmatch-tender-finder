@@ -1,5 +1,10 @@
 # Test and Acceptance Results
 
+> Historical test record. Counts below are preserved as evidence from that
+> pass, not as current results. See
+> [`docs/PR3_VERIFIED_HANDOFF.md`](../PR3_VERIFIED_HANDOFF.md) for the latest
+> independently rerun commands and exact totals.
+
 All results below were executed on the branch's headless Linux environment
 (Python 3.11). Live public-network and live-OpenAI checks are NOT reported as
 passed because they require external resources; they are marked opt-in/manual.

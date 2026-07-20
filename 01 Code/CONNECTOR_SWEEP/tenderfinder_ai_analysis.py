@@ -445,8 +445,12 @@ def validate_analysis_payload(payload: dict[str, Any], record_id: str) -> dict[s
         raise AnalysisSchemaError(f"invalid recommended_action: {payload['recommended_action']}")
     if payload["confidence"] not in CONFIDENCE_LEVELS:
         raise AnalysisSchemaError(f"invalid confidence: {payload['confidence']}")
-    # The model must echo the record_id we sent; enforce it.
-    payload["record_id"] = record_id
+    # The model must echo the record_id we sent.  Reject a mismatched response
+    # instead of silently relabelling analysis produced for another record.
+    if payload["record_id"] != record_id:
+        raise AnalysisSchemaError(
+            f"record_id mismatch: expected {record_id!r}, got {payload['record_id']!r}"
+        )
     return payload
 
 
