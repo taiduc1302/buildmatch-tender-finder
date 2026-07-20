@@ -155,6 +155,18 @@ def test_missing_required_field_is_rejected() -> None:
     assert result.error_kind == "schema_mismatch"
 
 
+def test_mismatched_record_id_is_rejected() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        result = ai.analyze_opportunity(
+            _request(record_id="R1"),
+            client_factory=_factory_for(_valid_payload(record_id="R2")),
+            state_root=tmp,
+        )
+    assert result.status == ai.STATUS_ERROR
+    assert result.error_kind == "schema_mismatch"
+    assert "record_id mismatch" in result.error_message
+
+
 def test_refusal_is_surfaced() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         result = ai.analyze_opportunity(
