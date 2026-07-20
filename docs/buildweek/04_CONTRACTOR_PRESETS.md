@@ -35,6 +35,6 @@ presets do not, exactly as intended.
   `overwrite=True`, so a founder's edits are never silently clobbered;
 - the active preset is shown in the GUI's contractor-profile selector.
 
-The AGENTS.md guidance (don't retune Tybo weights/gates without sign-off) is
+The AGENTS.md guidance (don't retune Meridian weights/gates without sign-off) is
 honoured: the Civil preset is an exact copy, and Residential/General are additive
 new workbooks, not edits to the canonical scoring.

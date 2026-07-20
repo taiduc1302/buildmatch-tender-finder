@@ -1,10 +1,50 @@
 # Tender Finder — Internal Weekly Beta
 
+**Problem:** construction estimators spend hours manually checking public
+tender portals and municipal development-application feeds, copy-pasting
+results into spreadsheets, and re-deciding by hand which opportunities fit
+their trade. **Intended users:** small-to-mid civil, residential, and general
+contractors who need a repeatable, truthful way to find and triage public
+opportunities without a manual CLI-and-copy-paste workflow.
+
 Tender Finder is a clickable Windows/Python application for collecting approved
 public tender and development-project signals, normalizing them, scoring their
 fit, and producing reviewable Excel workbooks. It is intended for an internal
 weekly operator workflow. It is not production-ready, a hosted service, or a
 self-contained executable.
+
+## AI tool and contributor disclosure
+
+This project was built with a mix of human direction and AI coding tools.
+Nothing here is hidden or attributed to the wrong tool; where a fact is not
+independently verifiable by the current session, it is marked as such rather
+than asserted.
+
+- **Human owner (founder):** product ownership, construction/estimating domain
+  knowledge, scope decisions, acceptance criteria, data and privacy calls,
+  review of all AI output, final architecture and submission decisions.
+- **Codex, with GPT-5.6 (founder-asserted; primary build session shared at
+  `https://chatgpt.com/share/e/6a5e47aa-2eac-83e8-8a55-41ba5b3a7694`):** the
+  original core scraper — connector sweep, engine orchestration, deterministic
+  keyword scoring, source registry, and the base Tkinter GUI shell — first
+  committed 2026-07-14, inside the OpenAI Build Week 2026 Submission Period
+  (opened 2026-07-13 09:00 PT). **The `/feedback` Codex Session ID required
+  for submission is PENDING FOUNDER CONFIRMATION** — it has not been
+  independently verified by any AI session and must be retrieved by the
+  founder from the Codex session itself before this project is submitted.
+- **Claude Code:** used afterward for independent code review, security and
+  privacy review, sanitization (including removing a real employer name that
+  had leaked into fixtures and screenshots), test-gap analysis, and targeted
+  implementation — the AI-copilot analysis feature described below, contractor
+  presets, the ranked-opportunity selection UI, the full-sweep refresh
+  service, associated tests, Windows-CI defect fixes, and this documentation.
+  This is disclosed as targeted implementation and review work, not claimed
+  as the project's core functionality.
+
+See `docs/buildweek/final/` for the detailed session-by-session evidence log
+behind these claims, and `docs/buildweek/final/CLAIMS_LEDGER.md` for a
+PASS/FAIL/UNKNOWN table (Codex-related rows are `UNKNOWN` pending the
+founder's Session ID confirmation above — not asserted as verified).
 
 The normal entry point is `Launch_TENDER_FINDER_GUI.bat`. Core orchestration is
 implemented separately from Tkinter in
@@ -13,6 +53,16 @@ can call the engine without automating the desktop GUI. That integration does
 not exist yet.
 
 ## BuildMatch Tender Finder — AI Opportunity Copilot (Build Week)
+
+**Pre-existing before Build Week (2026-07-14 baseline):** the connector sweep,
+deterministic keyword scoring engine, source registry, Excel workbook output,
+and base Tkinter GUI — see the disclosure above for authorship.
+
+**Built during the Submission Period (2026-07-13 through the deadline):**
+everything below this line — the AI copilot, contractor presets, data-mode/
+provenance tracking, the full-sweep refresh service (replacing a previous
+bounded preview), the Ranked Opportunities selection UI, and the Public
+Snapshot demo.
 
 The Run tab adds a contractor-profile-driven copilot workflow:
 

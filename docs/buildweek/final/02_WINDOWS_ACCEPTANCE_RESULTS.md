@@ -1,5 +1,7 @@
 # Windows Acceptance Results (Phase 4)
 
+> AI-tool attribution note: this document describes work done by Claude Code during this session. For the full, honest Codex/GPT-5.6/Claude Code contribution breakdown required by the OpenAI Build Week rules, see the README's "AI tool and contributor disclosure" section and `docs/buildweek/final/CLAIMS_LEDGER.md` — this document alone should not be read as claiming Claude Code built the project's core functionality.
+
 ## Update: real `pwsh` + real tkinter/X11 evidence added
 
 A later follow-up in this session found that while GitHub Releases is

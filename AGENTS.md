@@ -10,7 +10,7 @@ These rules apply to future agent work in `C:\Projects\buildmatch-tender-finder`
 - Invalid or missing keyword configuration must stop scoring. Do not add a hardcoded or partial fallback.
 - `01 Code/tenderfinder_agent2.py` is frozen legacy code. It intentionally retains independent built-in lists and must not be migrated without explicit founder approval.
 - Keep Vancouver tier thresholds/routing in code; only its two signal word lists are configurable in this version.
-- Do not retune Tybo weights, gates, matching semantics, or the 0–100 cap while performing maintenance unless the founder explicitly requests a business-logic change.
+- Do not retune Meridian weights, gates, matching semantics, or the 0–100 cap while performing maintenance unless the founder explicitly requests a business-logic change.
 
 Known legacy test failures are not permission to alter unrelated behavior. Do not “fix” these without explicit sign-off:
 

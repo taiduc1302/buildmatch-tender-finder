@@ -1,5 +1,34 @@
 # Three-Minute Demo (Public Snapshot mode)
 
+> AI-tool attribution note: for the honest Codex/GPT-5.6/Claude Code
+> contribution breakdown, see the README's "AI tool and contributor
+> disclosure" section. This script below is a planning script only —
+> recording, narrating, and uploading it is the founder's own action.
+
+## Recommended timed structure (OpenAI Build Week video requirements)
+
+The official rules require the video to explain both how Codex was used and
+how GPT-5.6 was used, with audio narration, 3 minutes or less. Recommended
+timing (a planning guideline, not an official requirement):
+
+```text
+0:00–0:15   Problem and hook
+0:15–0:35   Product and user
+0:35–1:35   Working end-to-end demo (steps 2-10 below)
+1:35–2:00   GPT-5.6 role — what it analyzes (opportunity evidence -> structured,
+            evidence-referenced recommendation), and that it is advisory only,
+            never overriding the deterministic fit score
+2:00–2:25   Codex role — name the original session
+            (https://chatgpt.com/share/e/6a5e47aa-2eac-83e8-8a55-41ba5b3a7694)
+            and what it built (the core scraper/engine/scoring baseline);
+            state the Session ID once the founder has retrieved it
+2:25–2:45   Impact and differentiation
+2:45–2:55   Conclusion
+```
+
+A silent screen recording or a recording with only background music does not
+satisfy the narration requirement — the video must have spoken audio.
+
 The default demo runs against the committed, sanitized **Public Snapshot** so it
 never depends on live sites during a presentation. The snapshot contains 82
 real, sanitized public development-application records captured via a

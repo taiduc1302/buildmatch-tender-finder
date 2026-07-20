@@ -1,5 +1,7 @@
 # Final Change Index (This Session)
 
+> AI-tool attribution note: this document describes work done by Claude Code during this session. For the full, honest Codex/GPT-5.6/Claude Code contribution breakdown required by the OpenAI Build Week rules, see the README's "AI tool and contributor disclosure" section and `docs/buildweek/final/CLAIMS_LEDGER.md` — this document alone should not be read as claiming Claude Code built the project's core functionality.
+
 Base: PR #3 head `5d155e027afa3b17826c352e18df97bdfa5a8c92` (the prior
 session's completed work, preserved in full — nothing discarded).
 

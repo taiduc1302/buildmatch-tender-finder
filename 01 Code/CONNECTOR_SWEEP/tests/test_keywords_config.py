@@ -53,7 +53,7 @@ def _sha256(path: Path) -> str:
 def test_live_and_template_validate() -> None:
     live = load_keywords_config(LIVE, force_reload=True)
     template = load_keywords_config(TEMPLATE, force_reload=True, allow_empty_profile=True)
-    assert live.company_name == "Tybo Contracting"
+    assert live.company_name == "Meridian Civil Works"
     assert live.active_keyword_count == 227
     assert template.active_keyword_count == 0
     assert {"Company_Profile", "Keywords", "Instructions"}.issubset(load_workbook(LIVE, read_only=True).sheetnames)
@@ -269,7 +269,7 @@ def test_cache_is_stable_until_explicit_reload() -> None:
 
 def test_gui_helpers_are_headless_and_read_live_config() -> None:
     result = gui.validate_keywords_for_gui(PACKAGE_ROOT, force_reload=True)
-    assert result["company_name"] == "Tybo Contracting"
+    assert result["company_name"] == "Meridian Civil Works"
     assert result["active_keyword_count"] == 227
     assert result["inactive_keyword_count"] == 0
     assert len(result["category_counts"]) == 12

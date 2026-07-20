@@ -76,7 +76,7 @@ live outside this tree under `C:\tenderfinder_out`.
 
 | File | Role |
 |---|---|
-| `config\keywords.xlsx` | Live, pre-filled Tybo profile and all active rules used by the main scorer, civil/tender gates, labels, and Vancouver signal lists |
+| `config\keywords.xlsx` | Live, pre-filled Meridian Civil Works profile and all active rules used by the main scorer, civil/tender gates, labels, and Vancouver signal lists |
 | `config\keywords_template.xlsx` | Blank handoff template with the same schema, dropdowns, instructions, and inactive examples |
 | `config\sources.csv` | One editable runtime registry for tender and development tracks |
 | `config\keywords_validation_last.txt` | Runtime validation report; generated on validation and ignored by Git |

@@ -1,5 +1,7 @@
 # Live OpenAI Analysis Results (Phase 3)
 
+> AI-tool attribution note: this document describes work done by Claude Code during this session. For the full, honest Codex/GPT-5.6/Claude Code contribution breakdown required by the OpenAI Build Week rules, see the README's "AI tool and contributor disclosure" section and `docs/buildweek/final/CLAIMS_LEDGER.md` — this document alone should not be read as claiming Claude Code built the project's core functionality.
+
 ## Key detection
 
 `OPENAI_API_KEY` present: **NO** (confirmed via `os.environ` inspection and a

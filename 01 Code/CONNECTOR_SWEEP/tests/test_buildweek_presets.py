@@ -56,7 +56,7 @@ def test_all_preset_workbooks_load_and_validate() -> None:
 def test_civil_preset_behaviour_is_stable() -> None:
     # Civil preset must reproduce the original scoring exactly.
     cfg = presets.load_preset_config("civil_contractor", root=REPO_ROOT)
-    assert cfg.company_name == "Tybo Contracting"
+    assert cfg.company_name == "Meridian Civil Works"
     assert len(cfg.rules_for("negative")) == 15  # all civil penalties active
     assert _score("civil_contractor", CIVIL_TEXT) == 100
     # a vertical/interior record is strongly penalized under Civil

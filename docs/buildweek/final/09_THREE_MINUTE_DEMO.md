@@ -1,5 +1,7 @@
 # Three-Minute Demo (Final)
 
+> AI-tool attribution note: this document describes work done by Claude Code during this session. For the full, honest Codex/GPT-5.6/Claude Code contribution breakdown required by the OpenAI Build Week rules, see the README's "AI tool and contributor disclosure" section and `docs/buildweek/final/CLAIMS_LEDGER.md` — this document alone should not be read as claiming Claude Code built the project's core functionality.
+
 See `docs/buildweek/07_THREE_MINUTE_DEMO.md` for the full script — it was
 updated in this session to reflect the real 82-record Public Snapshot and the
 new Ranked Opportunities selection UI (the AI action now requires an actual
