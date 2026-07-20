@@ -1,5 +1,9 @@
 # Remote PR Audit (Phase 11)
 
+> Historical audit of an earlier PR head. See
+> [`docs/PR3_VERIFIED_HANDOFF.md`](../../PR3_VERIFIED_HANDOFF.md) and GitHub PR
+> #3 for the current head, checks, file count, and review state.
+
 Performed after pushing this session's changes and confirming remote CI, from
 four perspectives: senior engineer, construction contractor, OpenAI Build Week
 judge, external security reviewer.

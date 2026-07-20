@@ -1,5 +1,12 @@
 # Final Status
 
+> Superseded as the current handoff by
+> [`docs/PR3_VERIFIED_HANDOFF.md`](../../PR3_VERIFIED_HANDOFF.md). The narrative
+> below is retained as historical session evidence. Current offline results are
+> 226 passed / 1 skipped for pytest and 209 passed / 0 failed for Self-Test;
+> live OpenAI, live-source reproduction, and human interactive GUI acceptance
+> remain unverified.
+
 **`COMPLETE_WITH_DOCUMENTED_EXTERNAL_BLOCKER`**
 
 ## Why not `COMPLETE_AND_VERIFIED`

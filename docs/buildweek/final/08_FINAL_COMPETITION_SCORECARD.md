@@ -1,5 +1,10 @@
 # Final Competition Readiness Scorecard
 
+> Historical, subjective scorecard rather than current acceptance evidence.
+> See [`docs/PR3_VERIFIED_HANDOFF.md`](../../PR3_VERIFIED_HANDOFF.md) for verified
+> facts and the remaining owner-only gates. Devpost is authoritative for full
+> competition rules and eligibility.
+
 Scores 0-10 with evidence, deductions, and confidence. Written after this
 session's remediation and remote CI verification (see `07_REMOTE_PR_AUDIT.md`).
 

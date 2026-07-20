@@ -1,5 +1,9 @@
 # BuildMatch Tender Finder — Build Week Final Implementation Summary
 
+> Historical implementation snapshot. For the current independently rerun
+> results, corrected claims, and remaining blockers, see
+> [`docs/PR3_VERIFIED_HANDOFF.md`](../PR3_VERIFIED_HANDOFF.md).
+
 This document summarizes the Build Week completion work delivered on branch
 `claude/buildmatch-tender-finder-completion-03pg2w`.
 

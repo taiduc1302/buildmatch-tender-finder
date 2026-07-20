@@ -45,3 +45,13 @@ Double-click `verify_package.bat` or run:
 
 Require `SELF_TEST: PASS`. Self-Test is strictly offline and writes artifacts
 beneath `C:\tenderfinder_out`, not the program folder.
+
+For development or release acceptance, install the test-only dependencies and
+run the full suite:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r "01 Code\CONNECTOR_SWEEP\requirements-dev.txt"
+Push-Location "01 Code\CONNECTOR_SWEEP"
+..\..\.venv\Scripts\python.exe -m pytest tests\ -q
+Pop-Location
+```
