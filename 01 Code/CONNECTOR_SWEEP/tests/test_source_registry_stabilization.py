@@ -99,7 +99,7 @@ def _add_unknown_column(path: Path) -> None:
 
 def test_atomic_write_backup_unknown_columns_and_failed_write_restore() -> None:
     canonical = REPO_ROOT / "config" / "sources.csv"
-    with tempfile.TemporaryDirectory(dir=r"C:\tenderfinder_out") as temp:
+    with tempfile.TemporaryDirectory() as temp:
         temp_root = Path(temp)
         registry = temp_root / "sources.csv"
         backups = temp_root / "backups"
@@ -135,7 +135,7 @@ def test_atomic_write_backup_unknown_columns_and_failed_write_restore() -> None:
 
 def test_private_and_duplicate_runnable_endpoints_are_rejected() -> None:
     canonical = REPO_ROOT / "config" / "sources.csv"
-    with tempfile.TemporaryDirectory(dir=r"C:\tenderfinder_out") as temp:
+    with tempfile.TemporaryDirectory() as temp:
         temp_root = Path(temp)
         registry = temp_root / "sources.csv"
         backups = temp_root / "backups"
@@ -222,7 +222,7 @@ def test_fixture_result_metadata_persists_only_to_selected_registry() -> None:
     canonical = REPO_ROOT / "config" / "sources.csv"
     canonical_before = sha256(canonical)
     previous_state = os.environ.get(STATE_ROOT_ENV_VAR)
-    with tempfile.TemporaryDirectory(dir=r"C:\tenderfinder_out") as temp:
+    with tempfile.TemporaryDirectory() as temp:
         temp_root = Path(temp)
         registry = temp_root / "sources.csv"
         shutil.copy2(canonical, registry)
@@ -310,7 +310,7 @@ def test_live_persistence_keeps_base_endpoint_separate_from_request_audit_url() 
     canonical = REPO_ROOT / "config" / "sources.csv"
     previous_state = os.environ.get(STATE_ROOT_ENV_VAR)
     original_run_connector = raw_sweep.run_connector
-    with tempfile.TemporaryDirectory(dir=r"C:\tenderfinder_out") as temp:
+    with tempfile.TemporaryDirectory() as temp:
         temp_root = Path(temp)
         registry = temp_root / "sources.csv"
         shutil.copy2(canonical, registry)

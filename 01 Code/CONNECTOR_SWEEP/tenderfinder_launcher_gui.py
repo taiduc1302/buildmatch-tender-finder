@@ -81,6 +81,18 @@ from tenderfinder_source_registry import (  # noqa: E402
     upsert_source,
 )
 
+# Build Week service/controller layer (all GUI-independent; no tkinter).
+import tenderfinder_data_modes as data_modes  # noqa: E402
+from tenderfinder_presets import (  # noqa: E402
+    DEFAULT_PRESET_ID,
+    get_preset,
+    list_presets,
+    resolve_preset_keywords_path,
+)
+from tenderfinder_ai_analysis import DeterministicEvidence, openai_key_present  # noqa: E402
+from tenderfinder_ai_controller import AiAnalysisController  # noqa: E402
+import tenderfinder_refresh_service as refresh_service  # noqa: E402
+
 ROOT_DIR = detect_package_root(SCRIPT_DIR)
 DEMO_SCRIPT = SCRIPT_DIR / "tenderfinder_demo_three_buckets.py"
 
@@ -299,6 +311,327 @@ def bc_bid_status_note(status: str) -> str:
 def default_output_dir(now: dt.datetime | None = None) -> Path:
     now = now or dt.datetime.now()
     return DEFAULT_OUTPUT_ROOT / f"weekly_run_{now.strftime('%Y%m%d_%H%M%S')}"
+
+
+# --------------------------------------------------------------------------- #
+# Build Week helpers (display-agnostic; unit-tested without a Tk display).
+# The GUI methods below are thin wrappers over these so all business logic
+# stays testable and the GUI never duplicates it.
+# --------------------------------------------------------------------------- #
+
+
+def current_data_mode_banner(state_root: str | Path | None = None,
+                             package_root: Path = ROOT_DIR) -> str:
+    """Return the persistent data-mode banner text for the active dataset.
+
+    With no active dataset yet, the packaged input is synthetic demo data, so
+    the banner truthfully says so rather than implying live data.
+    """
+    try:
+        provenance = data_modes.load_active_dataset(
+            state_root=state_root, package_root=package_root
+        )
+    except Exception:
+        provenance = None
+    if provenance is None:
+        return "SYNTHETIC DEMO DATA — no real opportunities (no refresh yet)"
+    return provenance.banner_text()
+
+
+def preset_choices() -> list[tuple[str, str]]:
+    """(preset_id, display_name) pairs for the contractor-profile selector."""
+    return [(preset.preset_id, preset.display_name) for preset in list_presets()]
+
+
+def ai_button_state_text() -> str:
+    """Label/status for the AI analysis affordance based on key presence."""
+    if openai_key_present():
+        return "Analyze Selected Opportunity with AI"
+    return "Analyze Selected Opportunity with AI (set OPENAI_API_KEY)"
+
+
+def analyze_record_headless(
+    record: dict,
+    preset_id: str,
+    evidence: dict,
+    *,
+    state_root: str | Path | None = None,
+    package_root: Path = ROOT_DIR,
+    client_factory=None,
+) -> dict:
+    """Run AI analysis for one record and return a render-ready view dict.
+
+    Deterministic evidence is preserved; the AI section is advisory and separate.
+    """
+    controller = AiAnalysisController(
+        state_root=state_root, package_root=package_root, client_factory=client_factory
+    )
+    det = DeterministicEvidence(
+        fit_score=int(evidence.get("fit_score", 0) or 0),
+        routing_bucket=str(evidence.get("routing_bucket", "")),
+        matched_positive_terms=tuple(evidence.get("matched_positive_terms", []) or ()),
+        matched_negative_terms=tuple(evidence.get("matched_negative_terms", []) or ()),
+    )
+    result = controller.analyze(record, get_preset(preset_id), det)
+    return controller.build_view(result).to_dict()
+
+
+def format_ai_status_line(view: dict) -> str:
+    """One-line status for the AI section of the GUI."""
+    status = view.get("status", "")
+    if status == "SETUP_REQUIRED":
+        return "AI: set OPENAI_API_KEY to enable AI analysis (deterministic ranking works without it)."
+    ai = view.get("ai_section")
+    if not ai:
+        return view.get("message", "AI analysis unavailable.")
+    provenance = view.get("provenance", {})
+    cached = " (cached)" if provenance.get("cached") else ""
+    return (
+        f"AI: {ai.get('match_assessment', '')} — recommends "
+        f"{ai.get('recommended_action', '')} · confidence {ai.get('confidence', '')}{cached}"
+    )
+
+
+def format_ai_view_for_dialog(view: dict) -> str:
+    """Human-readable AI + deterministic summary for a messagebox, keeping the
+    deterministic conclusions and the advisory AI conclusions clearly separate."""
+    det = view.get("deterministic_section", {})
+    lines = [
+        f"Opportunity: {view.get('record_id', '')}",
+        "",
+        "DETERMINISTIC RESULT (authoritative):",
+        f"  Fit score: {det.get('fit_score')}",
+        f"  Routing bucket: {det.get('routing_bucket')}",
+        f"  Matched positive: {', '.join(det.get('matched_positive_terms', [])) or '—'}",
+        f"  Matched negative: {', '.join(det.get('matched_negative_terms', [])) or '—'}",
+        "",
+    ]
+    if view.get("status") == "SETUP_REQUIRED":
+        lines.append(view.get("message", "Set OPENAI_API_KEY to enable AI analysis."))
+        return "\n".join(lines)
+    ai = view.get("ai_section")
+    if not ai:
+        lines.append(view.get("message", "AI analysis unavailable."))
+        return "\n".join(lines)
+    lines += [
+        "AI ADVISORY ANALYSIS (does not change the score or bucket):",
+        f"  Assessment: {ai.get('match_assessment')} · Action: {ai.get('recommended_action')} "
+        f"· Confidence: {ai.get('confidence')}",
+        f"  Summary: {ai.get('project_summary', '')}",
+        "  Positive factors:",
+    ]
+    lines += [f"    - {f.get('factor')} ({f.get('evidence_field')}={f.get('evidence_value')})"
+              for f in ai.get("positive_factors", [])] or ["    - —"]
+    lines += ["  Negative factors:"]
+    lines += [f"    - {f.get('factor')} ({f.get('evidence_field')}={f.get('evidence_value')})"
+              for f in ai.get("negative_factors", [])] or ["    - —"]
+    lines += ["  Missing information:"]
+    lines += [f"    - {item}" for item in ai.get("missing_information", [])] or ["    - —"]
+    lines += ["  Next steps:"]
+    lines += [f"    - {item}" for item in ai.get("next_steps", [])] or ["    - —"]
+    if view.get("disagreement"):
+        d = view["disagreement"]
+        lines += ["", "DISAGREEMENT — HUMAN REVIEW:",
+                  f"  Deterministic: {d.get('deterministic_bucket')} vs AI: {d.get('ai_recommended_action')}"]
+    return "\n".join(lines)
+
+
+def _read_dataset_records(path: Path) -> list[dict]:
+    """Read records from an active-dataset file (.csv or .xlsx)."""
+    suffix = path.suffix.casefold()
+    if suffix == ".csv":
+        import csv as _csv
+
+        with path.open(encoding="utf-8") as handle:
+            return list(_csv.DictReader(handle))
+    if suffix in (".xlsx", ".xlsm"):
+        import openpyxl
+
+        # Explicit close: a read_only workbook keeps its file handle open,
+        # and on Windows that blocks deleting/replacing the file afterward.
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+        finally:
+            wb.close()
+        if not rows:
+            return []
+        headers = [str(h) if h is not None else "" for h in rows[0]]
+        return [dict(zip(headers, row)) for row in rows[1:]]
+    return []
+
+
+# Stage/status markers that mean an application is finished (dead or already
+# through the process), so it is not an opportunity a contractor can pursue.
+# Mirrors the exclusion list Surrey's own live-source filter uses in
+# config/sources.csv (test_query_where). Substring match, case-insensitive.
+TERMINAL_STAGE_MARKERS: tuple[str, ...] = (
+    "concluded", "closed", "cancelled", "canceled", "withdrawn", "refused",
+    "rejected", "expired", "final maintenance", "ok for occupancy",
+)
+
+
+def _is_terminal_stage(record: dict) -> bool:
+    """True when the record's stage/status text marks a finished application."""
+    blob = " ".join(
+        str(record.get(key, "")) for key in ("app_type_stage", "status")
+    ).casefold()
+    return any(marker in blob for marker in TERMINAL_STAGE_MARKERS)
+
+
+def ranked_opportunities(
+    *,
+    state_root: str | Path | None = None,
+    preset_id: str = DEFAULT_PRESET_ID,
+    package_root: Path = ROOT_DIR,
+    limit: int = 500,
+    include_terminal_stages: bool = False,
+) -> list[dict]:
+    """Score every record of the active dataset under the given preset and
+    return the full ranked list, sorted by fit score descending.
+
+    Each item is ``{"rank": int, "record": dict, "evidence": dict}``. Returns
+    ``[]`` when there is no active dataset. This backs the GUI's ranked
+    opportunity selection table — the user picks a specific row, rather than
+    the tool silently picking one for them.
+
+    By default, records whose stage/status marks the application as finished
+    (Concluded, Closed, Cancelled, Withdrawn, ...) are excluded — they are not
+    opportunities anyone can pursue. Pass ``include_terminal_stages=True`` for
+    the unfiltered list.
+    """
+    provenance = data_modes.load_active_dataset(state_root=state_root, package_root=package_root)
+    if provenance is None or not provenance.path:
+        return []
+    path = Path(provenance.path)
+    if not path.exists():
+        return []
+    records = _read_dataset_records(path)
+    if not records:
+        return []
+
+    import os as _os
+
+    from tenderfinder_keywords_config import (
+        KEYWORDS_ENV_OVERRIDE_LOCK as _lock,
+        clear_keywords_cache as _clear,
+    )
+    import tenderfinder_guards as _guards
+
+    # Serialize against any other concurrent preset-scoring pass (e.g. a
+    # Refresh Development Data run's scorer) - CONFIG_ENV_VAR is process-global.
+    with _lock:
+        previous = _os.environ.get("TENDER_FINDER_KEYWORDS_CONFIG")
+        _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = str(
+            resolve_preset_keywords_path(preset_id, root=package_root)
+        )
+        try:
+            # Clear once so the preset config pointed at by the env var above is
+            # loaded fresh; inside the loop the cached config is reused (the
+            # lock prevents any concurrent cache mutation). Clearing per record
+            # forced a full keyword-workbook reload for every row.
+            _clear()
+            scored: list[dict] = []
+            for record in records:
+                if not include_terminal_stages and _is_terminal_stage(record):
+                    continue
+                text = " ".join(
+                    str(record.get(key, ""))
+                    for key in ("scope_summary", "app_type_stage", "address", "title", "tender_title")
+                )
+                breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
+                fit = breakdown["fit_score"]
+                bucket = (
+                    "Future_Projects" if fit >= 60 else
+                    "Run_Queue" if fit >= 50 else "Rejected_Archive"
+                )
+                evidence = {
+                    "fit_score": fit,
+                    "routing_bucket": bucket,
+                    "matched_positive_terms": [r.keyword for r in breakdown["positive_matches"]],
+                    "matched_negative_terms": [r.keyword for r in breakdown["negative_matches"]],
+                }
+                scored.append({"record": record, "evidence": evidence})
+            scored.sort(key=lambda item: item["evidence"]["fit_score"], reverse=True)
+            scored = scored[:limit]
+            for index, item in enumerate(scored, start=1):
+                item["rank"] = index
+            return scored
+        finally:
+            if previous is None:
+                _os.environ.pop("TENDER_FINDER_KEYWORDS_CONFIG", None)
+            else:
+                _os.environ["TENDER_FINDER_KEYWORDS_CONFIG"] = previous
+            _clear()
+
+
+def top_ranked_opportunity(
+    *,
+    state_root: str | Path | None = None,
+    preset_id: str = DEFAULT_PRESET_ID,
+    package_root: Path = ROOT_DIR,
+) -> tuple[dict | None, dict | None]:
+    """Return (record, deterministic_evidence) for the single highest-fit
+    record of the active dataset, or (None, None) if unavailable.
+
+    This is a convenience shortcut ONLY — it backs the explicitly-labelled
+    "Analyze Top-Ranked Opportunity" action. The primary "Analyze Selected
+    Opportunity with AI" action must use an actual user selection from the
+    ranked-opportunities table (see ``resolve_selected_opportunity``), never
+    this auto-pick.
+    """
+    ranked = ranked_opportunities(
+        state_root=state_root, preset_id=preset_id, package_root=package_root, limit=1
+    )
+    if not ranked:
+        return None, None
+    return ranked[0]["record"], ranked[0]["evidence"]
+
+
+def resolve_selected_opportunity(
+    ranked: list[dict], selected_rank: int | None
+) -> tuple[dict | None, dict | None]:
+    """Map a 1-based rank (from the ranked-opportunities table selection) back
+    to ``(record, evidence)``.
+
+    Returns ``(None, None)`` when nothing is selected or the rank is not found
+    in the current ranked list (e.g. a stale selection after a refresh) —
+    NEVER silently substitutes a different opportunity such as the top-ranked
+    one.
+    """
+    if selected_rank is None:
+        return None, None
+    for item in ranked:
+        if item["rank"] == selected_rank:
+            return item["record"], item["evidence"]
+    return None, None
+
+
+def opportunity_row_values(item: dict) -> tuple:
+    """Treeview column values for one ranked-opportunity item: rank, fit score,
+    bucket, title, municipality, type/stage, status, source, record ID."""
+    record = item["record"]
+    evidence = item["evidence"]
+    title = (
+        record.get("scope_summary") or record.get("title")
+        or record.get("tender_title") or record.get("address") or ""
+    )
+    title = str(title)
+    if len(title) > 90:
+        title = title[:87] + "..."
+    record_id = record.get("lead_id") or record.get("app_no") or record.get("record_id") or ""
+    return (
+        item["rank"],
+        evidence["fit_score"],
+        evidence["routing_bucket"],
+        title,
+        record.get("municipality", ""),
+        record.get("app_type_stage", ""),
+        record.get("status_class", record.get("status", "")),
+        record.get("source", record.get("source_id", "")),
+        record_id,
+    )
 
 
 def build_demo_command(
@@ -614,10 +947,17 @@ class DemoBuildWorker:
         terminated = True
         if self.proc is not None:
             terminated = terminate_process_tree(self.proc)
-        if self.tee is not None and not self._log_written:
-            self._log_written = True
-            self.tee.put("USER_STOPPED: the Stop button was clicked; the build was "
-                         "terminated intentionally, this is not a crash.")
+        if self.tee is not None:
+            if not self._log_written:
+                self._log_written = True
+                self.tee.put("USER_STOPPED: the Stop button was clicked; the build was "
+                             "terminated intentionally, this is not a crash.")
+            # Persist the stop log here (idempotent overwrite) BEFORE the
+            # partial-marker check below. The worker thread's _run() may also
+            # write it, so relying only on `_log_written` created a race where
+            # stop() could reach the iterdir() check before the file existed and
+            # skip the partial marker. Writing unconditionally makes the marker
+            # deterministic regardless of which thread wins.
             write_error_log(self.out_dir, self.tee.lines)
         try:
             if self.out_dir.exists() and any(self.out_dir.iterdir()):
@@ -764,12 +1104,14 @@ class TenderFinderLauncherApp:
         self.notebook.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
 
         self.run_tab = ttk.Frame(self.notebook, padding=pad)
+        self.opportunities_tab = ttk.Frame(self.notebook, padding=pad)
         self.keywords_tab = ttk.Frame(self.notebook, padding=pad)
         self.email_tab = ttk.Frame(self.notebook, padding=pad)
         self.source_tab = ttk.Frame(self.notebook, padding=pad)
         self.results_tab = ttk.Frame(self.notebook, padding=pad)
         self.settings_tab = ttk.Frame(self.notebook, padding=pad)
         self.notebook.add(self.run_tab, text="Run")
+        self.notebook.add(self.opportunities_tab, text="Ranked Opportunities")
         self.notebook.add(self.keywords_tab, text="Keywords")
         self.notebook.add(self.email_tab, text="Email Alerts")
         self.notebook.add(self.source_tab, text="Source Checks")
@@ -778,6 +1120,7 @@ class TenderFinderLauncherApp:
 
         for tab in (
             self.run_tab,
+            self.opportunities_tab,
             self.keywords_tab,
             self.email_tab,
             self.source_tab,
@@ -787,6 +1130,7 @@ class TenderFinderLauncherApp:
             tab.columnconfigure(0, weight=1)
 
         self._build_run_tab()
+        self._build_opportunities_tab()
         self._build_keywords_tab()
         self._build_email_tab()
         self._build_source_tab()
@@ -830,8 +1174,46 @@ class TenderFinderLauncherApp:
             row=2, column=2, columnspan=6, sticky="w", padx=(6, 10), pady=(0, 10)
         )
 
+        # --- Build Week: Development Data refresh, Contractor preset, AI ---
+        buildweek = ttk.LabelFrame(self.run_tab, text="Development Data, Contractor Profile & AI")
+        buildweek.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        for col in range(4):
+            buildweek.columnconfigure(col, weight=1)
+        self.data_mode_var = tk.StringVar(value=current_data_mode_banner(package_root=ROOT_DIR))
+        self.data_mode_label = ttk.Label(
+            buildweek, textvariable=self.data_mode_var, font=(UI_FONT, 9, "bold"),
+            wraplength=980, justify="left",
+        )
+        self.data_mode_label.grid(row=0, column=0, columnspan=4, sticky="ew", padx=10, pady=(10, 6))
+        ttk.Label(buildweek, text="Contractor profile:", font=(UI_FONT, 9)).grid(
+            row=1, column=0, sticky="w", padx=(10, 4), pady=(0, 8)
+        )
+        self._preset_by_name = {name: pid for pid, name in preset_choices()}
+        self.preset_var = tk.StringVar(value=get_preset(DEFAULT_PRESET_ID).display_name)
+        self.preset_combo = ttk.Combobox(
+            buildweek, textvariable=self.preset_var,
+            values=[name for _pid, name in preset_choices()], state="readonly",
+        )
+        self.preset_combo.grid(row=1, column=1, sticky="ew", padx=6, pady=(0, 8))
+        self.refresh_dev_button = ttk.Button(
+            buildweek, text="Refresh Development Data", command=self._on_refresh_dev_clicked
+        )
+        self.refresh_dev_button.grid(row=1, column=2, sticky="ew", padx=6, pady=(0, 8))
+        self.view_opportunities_button = ttk.Button(
+            buildweek, text="View Ranked Opportunities →",
+            command=self._on_view_opportunities_clicked,
+        )
+        self.view_opportunities_button.grid(row=1, column=3, sticky="ew", padx=(6, 10), pady=(0, 8))
+        ttk.Label(
+            buildweek,
+            text="Select a contractor profile, refresh development data (or use the Public "
+                 "Snapshot demo), then open Ranked Opportunities to pick a specific opportunity "
+                 "and analyze it with AI.",
+            font=(UI_FONT, 8), wraplength=980, justify="left",
+        ).grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
+
         output = ttk.LabelFrame(self.run_tab, text="Post-Run Actions")
-        output.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        output.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         for col in range(5):
             output.columnconfigure(col, weight=1)
         self.open_workbook_button = ttk.Button(output, text="Open Workbook", command=self._open_workbook, state="disabled")
@@ -846,7 +1228,7 @@ class TenderFinderLauncherApp:
         self.copy_paths_button.grid(row=0, column=4, sticky="ew", padx=(6, 10), pady=(10, 8))
 
         status_frame = ttk.LabelFrame(self.run_tab, text="Current Step")
-        status_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        status_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         status_frame.columnconfigure(1, weight=1)
         self.spinner_canvas = tk.Canvas(status_frame, width=64, height=64, highlightthickness=0, bg=self.root.cget("bg"))
         self.spinner_canvas.grid(row=0, column=0, rowspan=3, sticky="nw", padx=(10, 8), pady=10)
@@ -864,11 +1246,105 @@ class TenderFinderLauncherApp:
         ttk.Label(status_frame, textvariable=self.source_progress_var, font=(UI_FONT, 8), wraplength=930, justify="left").grid(row=2, column=1, sticky="ew", padx=(0, 10), pady=(2, 10))
 
         quick = ttk.LabelFrame(self.run_tab, text="Last Run Result")
-        quick.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
-        self.run_tab.rowconfigure(3, weight=1)
+        quick.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
+        self.run_tab.rowconfigure(4, weight=1)
         quick.columnconfigure(0, weight=1)
         ttk.Label(quick, textvariable=self.result_var, font=(UI_FONT, 9), wraplength=980, justify="left").grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
         ttk.Label(quick, textvariable=self.result_paths_var, font=(UI_FONT, 8), wraplength=980, justify="left").grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+
+    def _build_opportunities_tab(self) -> None:
+        """Ranked-opportunity selection: the user picks a specific row and
+        analyzes THAT record with AI - the tool never silently substitutes the
+        top-ranked (or any other) opportunity for a manual selection."""
+        tk, ttk = self.tk, self.ttk
+
+        banner = ttk.LabelFrame(self.opportunities_tab, text="Ranked Opportunities")
+        banner.grid(row=0, column=0, sticky="ew")
+        banner.columnconfigure(0, weight=1)
+        self.opportunities_data_mode_var = tk.StringVar(value=current_data_mode_banner(package_root=ROOT_DIR))
+        ttk.Label(
+            banner, textvariable=self.opportunities_data_mode_var, font=(UI_FONT, 9, "bold"),
+            wraplength=980, justify="left",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+        controls = ttk.Frame(banner)
+        controls.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+        self.load_opportunities_button = ttk.Button(
+            controls, text="Load / Refresh Ranked List", command=self._on_load_opportunities_clicked
+        )
+        self.load_opportunities_button.grid(row=0, column=0, sticky="w")
+        self.show_finished_var = tk.BooleanVar(value=False)
+        self.show_finished_check = ttk.Checkbutton(
+            controls,
+            text="Include finished applications (Concluded / Closed / Cancelled ...)",
+            variable=self.show_finished_var,
+            command=self._on_toggle_show_finished,
+        )
+        self.show_finished_check.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.opportunities_count_var = tk.StringVar(value="No ranked opportunities loaded yet.")
+        ttk.Label(controls, textvariable=self.opportunities_count_var, font=(UI_FONT, 9)).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+
+        table_frame = ttk.LabelFrame(self.opportunities_tab, text="Select an opportunity")
+        table_frame.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        self.opportunities_tab.rowconfigure(1, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = ("rank", "fit", "bucket", "title", "municipality", "type", "status", "source", "record_id")
+        headings = {
+            "rank": "#", "fit": "Fit", "bucket": "Bucket", "title": "Title / Scope",
+            "municipality": "Municipality", "type": "Type/Stage", "status": "Status",
+            "source": "Source", "record_id": "Record ID",
+        }
+        widths = {
+            "rank": 40, "fit": 50, "bucket": 110, "title": 340, "municipality": 100,
+            "type": 130, "status": 80, "source": 130, "record_id": 100,
+        }
+        self.opportunities_tree = ttk.Treeview(
+            table_frame, columns=columns, show="headings", selectmode="browse", height=14
+        )
+        for col in columns:
+            self.opportunities_tree.heading(col, text=headings[col])
+            self.opportunities_tree.column(col, width=widths[col], anchor="w", stretch=(col == "title"))
+        self.opportunities_tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=10)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.opportunities_tree.yview)
+        self.opportunities_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=10)
+        self.opportunities_tree.bind("<<TreeviewSelect>>", self._on_opportunity_selected)
+
+        detail = ttk.LabelFrame(self.opportunities_tab, text="Selected opportunity — deterministic evidence")
+        detail.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        detail.columnconfigure(0, weight=1)
+        self.selected_opportunity_var = tk.StringVar(value="No opportunity selected.")
+        ttk.Label(
+            detail, textvariable=self.selected_opportunity_var, font=(UI_FONT, 9),
+            wraplength=980, justify="left",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=10)
+
+        actions = ttk.Frame(self.opportunities_tab)
+        actions.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        self.ai_analyze_button = ttk.Button(
+            actions, text="Analyze Selected Opportunity with AI",
+            command=self._on_ai_analyze_clicked, state="disabled",
+        )
+        self.ai_analyze_button.grid(row=0, column=0, sticky="w")
+        self.ai_analyze_top_button = ttk.Button(
+            actions, text="Analyze Top-Ranked Opportunity",
+            command=self._on_ai_analyze_top_clicked, state="disabled",
+        )
+        self.ai_analyze_top_button.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.ai_status_var = tk.StringVar(value=(
+            "AI ready." if openai_key_present() else
+            "AI: set OPENAI_API_KEY to enable (deterministic ranking works without it)."
+        ))
+        ttk.Label(
+            self.opportunities_tab, textvariable=self.ai_status_var, font=(UI_FONT, 8),
+            wraplength=980, justify="left",
+        ).grid(row=4, column=0, sticky="ew", pady=(6, 0))
+
+    def _on_view_opportunities_clicked(self) -> None:
+        self.notebook.select(self.opportunities_tab)
 
     def _build_keywords_tab(self) -> None:
         tk, ttk = self.tk, self.ttk
@@ -1638,6 +2114,299 @@ class TenderFinderLauncherApp:
         self.run_mode_var.set(RUN_MODE_FAST)
         self.mode_summary_var.set("Current mode: Offline/Test Run")
         self._on_run_clicked()
+
+    # --- Build Week: preset, development-data refresh, AI analysis ----------- #
+
+    def selected_preset_id(self) -> str:
+        return self._preset_by_name.get(self.preset_var.get(), DEFAULT_PRESET_ID)
+
+    def _refresh_data_mode_banner(self) -> None:
+        try:
+            banner = current_data_mode_banner(package_root=ROOT_DIR)
+        except Exception:
+            return
+        self.data_mode_var.set(banner)
+        if hasattr(self, "opportunities_data_mode_var"):
+            self.opportunities_data_mode_var.set(banner)
+
+    def _on_refresh_dev_clicked(self) -> None:
+        if getattr(self, "_dev_refresh_running", False):
+            return
+        preset_id = self.selected_preset_id()
+        self._dev_refresh_running = True
+        self.refresh_dev_button.configure(state="disabled")
+        self.status_var.set("Refreshing development data from eligible public sources...")
+        self._refresh_result_queue: queue.Queue = queue.Queue()
+
+        def worker() -> None:
+            try:
+                run_id = data_modes.new_dataset_id("refresh")
+                request = refresh_service.RefreshRequest(
+                    preset_id=preset_id, package_root=ROOT_DIR, run_id=run_id,
+                )
+                # Real full paginated sweep (tenderfinder_raw_sweep.run_connector),
+                # not a bounded connector-test preview.
+                acquirer = refresh_service.make_full_sweep_acquirer(
+                    request, package_root=ROOT_DIR, run_id=run_id
+                )
+                # Real deterministic scoring + ranked output workbook (not a
+                # no-op) so BID LATER / WATCH / SKIP counts are truthful.
+                scorer = refresh_service.make_default_scorer(request)
+                result = refresh_service.refresh_development_data(
+                    request, acquirer=acquirer, scorer=scorer
+                )
+                self._refresh_result_queue.put(("ok", result))
+            except Exception as exc:  # noqa: BLE001 - surface any failure to the user
+                self._refresh_result_queue.put(("error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(200, self._poll_refresh_queue)
+
+    def _poll_refresh_queue(self) -> None:
+        try:
+            kind, payload = self._refresh_result_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(200, self._poll_refresh_queue)
+            return
+        self._dev_refresh_running = False
+        self.refresh_dev_button.configure(state="normal")
+        self._refresh_data_mode_banner()
+        if kind == "error":
+            self.status_var.set(f"Refresh failed: {payload}")
+            self.messagebox.showerror("Refresh Development Data", f"Refresh failed:\n{payload}")
+            return
+        result = payload
+        metrics = result.metrics
+        self.run_metrics_var.set(
+            f"Refresh: {metrics.sources_successful}/{metrics.sources_attempted} sources OK | "
+            f"fetched {metrics.records_fetched} | live {metrics.records_live} | "
+            f"BID NOW {metrics.bid_now} / BID LATER {metrics.bid_later} / "
+            f"WATCH {metrics.watch} / SKIP {metrics.skip}"
+        )
+        self.status_var.set(
+            result.message if result.succeeded
+            else f"{result.message} (previous data retained)"
+        )
+        if result.succeeded and hasattr(self, "opportunities_count_var"):
+            self.opportunities_count_var.set(
+                "New data refreshed. Click 'Load / Refresh Ranked List' to see it here."
+            )
+        (self.messagebox.showinfo if result.succeeded else self.messagebox.showwarning)(
+            "Refresh Development Data", result.message
+        )
+
+    # --- Opportunities tab: ranked list, selection, AI on the selected row --- #
+
+    def _on_toggle_show_finished(self) -> None:
+        """Re-load the ranked list when the finished-applications filter is
+        toggled, so the table always reflects the checkbox state."""
+        if getattr(self, "_opportunities_loading", False):
+            return
+        self._on_load_opportunities_clicked()
+
+    def _on_load_opportunities_clicked(self) -> None:
+        if getattr(self, "_opportunities_loading", False):
+            return
+        self._opportunities_loading = True
+        self.load_opportunities_button.configure(state="disabled")
+        self.opportunities_count_var.set("Loading ranked opportunities...")
+        # Clear stale rows immediately: showing the previous load's rows under
+        # a "Loading..." banner reads as the new filter state not working.
+        for row_id in self.opportunities_tree.get_children():
+            self.opportunities_tree.delete(row_id)
+        self._opportunities_queue: queue.Queue = queue.Queue()
+        preset_id = self.selected_preset_id()
+        include_finished = bool(self.show_finished_var.get())
+
+        def worker() -> None:
+            try:
+                ranked = ranked_opportunities(
+                    preset_id=preset_id, package_root=ROOT_DIR,
+                    include_terminal_stages=include_finished,
+                )
+                self._opportunities_queue.put(("ok", ranked))
+            except Exception as exc:  # noqa: BLE001
+                self._opportunities_queue.put(("error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(200, self._poll_opportunities_queue)
+
+    def _poll_opportunities_queue(self) -> None:
+        try:
+            kind, payload = self._opportunities_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(200, self._poll_opportunities_queue)
+            return
+        self._opportunities_loading = False
+        self.load_opportunities_button.configure(state="normal")
+        if kind == "error":
+            self.opportunities_count_var.set(f"Failed to load ranked opportunities: {payload}")
+            return
+        self._ranked_opportunities = payload
+        for row_id in self.opportunities_tree.get_children():
+            self.opportunities_tree.delete(row_id)
+        for item in self._ranked_opportunities:
+            self.opportunities_tree.insert(
+                "", "end", iid=str(item["rank"]), values=opportunity_row_values(item)
+            )
+        if self._ranked_opportunities:
+            filter_note = (
+                "finished applications included"
+                if self.show_finished_var.get()
+                else "finished applications (Concluded/Closed/Cancelled ...) filtered out"
+            )
+            self.opportunities_count_var.set(
+                f"{len(self._ranked_opportunities)} ranked opportunities loaded ({filter_note}). "
+                f"Select one, then click 'Analyze Selected Opportunity with AI'."
+            )
+            self.ai_analyze_top_button.configure(state="normal")
+        else:
+            self.opportunities_count_var.set(
+                "No opportunities available yet. Run 'Refresh Development Data' "
+                "(Run tab) or load the Public Snapshot demo first."
+            )
+            self.ai_analyze_top_button.configure(state="disabled")
+        self.selected_opportunity_var.set("No opportunity selected.")
+        self.ai_analyze_button.configure(state="disabled")
+
+    def _selected_opportunity_rank(self) -> int | None:
+        selection = self.opportunities_tree.selection()
+        if not selection:
+            return None
+        try:
+            return int(selection[0])
+        except (TypeError, ValueError):
+            return None
+
+    def _on_opportunity_selected(self, _event=None) -> None:
+        rank = self._selected_opportunity_rank()
+        record, evidence = resolve_selected_opportunity(
+            getattr(self, "_ranked_opportunities", []), rank
+        )
+        if record is None:
+            self.selected_opportunity_var.set("No opportunity selected.")
+            self.ai_analyze_button.configure(state="disabled")
+            return
+        title = record.get("scope_summary") or record.get("title") or record.get("address") or ""
+        self.selected_opportunity_var.set(
+            f"#{rank}  Fit score {evidence['fit_score']}  ({evidence['routing_bucket']})\n"
+            f"{title}\n"
+            f"Matched positive terms: {', '.join(evidence['matched_positive_terms']) or '—'}\n"
+            f"Matched negative terms: {', '.join(evidence['matched_negative_terms']) or '—'}"
+        )
+        self.ai_analyze_button.configure(state="normal")
+
+    def _on_ai_analyze_clicked(self) -> None:
+        """Analyze the opportunity the user actually selected in the ranked
+        list. Never substitutes another record — if nothing is selected, the
+        button is disabled and this only fires from a stale/cleared selection
+        edge case, which is handled explicitly rather than silently picking one."""
+        if getattr(self, "_ai_running", False):
+            return
+        rank = self._selected_opportunity_rank()
+        record, evidence = resolve_selected_opportunity(
+            getattr(self, "_ranked_opportunities", []), rank
+        )
+        if record is None:
+            self.messagebox.showinfo(
+                "AI Analysis",
+                "Select an opportunity in the ranked list first, then click "
+                "'Analyze Selected Opportunity with AI'.",
+            )
+            return
+        self._run_ai_analysis(record, evidence)
+
+    def _on_ai_analyze_top_clicked(self) -> None:
+        """Explicit, separately-labelled convenience shortcut that analyzes the
+        top-ranked opportunity without requiring a manual selection.
+
+        The top-ranked lookup reads and scores the entire active dataset, so it
+        must run off the Tk main thread — doing it inline froze the window
+        ("Not Responding") for the whole scoring pass."""
+        if getattr(self, "_ai_running", False):
+            return
+        if getattr(self, "_ai_top_pick_running", False):
+            return
+        self._ai_top_pick_running = True
+        self.ai_analyze_top_button.configure(state="disabled")
+        self.ai_status_var.set("Scoring the active dataset to find the top-ranked opportunity...")
+        self._ai_top_pick_queue: queue.Queue = queue.Queue()
+        preset_id = self.selected_preset_id()
+
+        def worker() -> None:
+            try:
+                record, evidence = top_ranked_opportunity(
+                    preset_id=preset_id, package_root=ROOT_DIR
+                )
+                self._ai_top_pick_queue.put(("ok", (record, evidence)))
+            except Exception as exc:  # noqa: BLE001 - surface any failure to the user
+                self._ai_top_pick_queue.put(("error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(200, self._poll_ai_top_pick_queue)
+
+    def _poll_ai_top_pick_queue(self) -> None:
+        try:
+            kind, payload = self._ai_top_pick_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(200, self._poll_ai_top_pick_queue)
+            return
+        self._ai_top_pick_running = False
+        self.ai_analyze_top_button.configure(state="normal")
+        if kind == "error":
+            self.ai_status_var.set(f"Top-ranked lookup failed: {payload}")
+            self.messagebox.showerror(
+                "AI Analysis", f"Could not determine the top-ranked opportunity:\n{payload}"
+            )
+            return
+        record, evidence = payload
+        if record is None:
+            self.ai_status_var.set("")
+            self.messagebox.showinfo(
+                "AI Analysis",
+                "No ranked opportunity is available yet. Run 'Refresh Development "
+                "Data' or load the Public Snapshot demo first.",
+            )
+            return
+        self._run_ai_analysis(record, evidence)
+
+    def _run_ai_analysis(self, record: dict, evidence: dict) -> None:
+        self._ai_running = True
+        self.ai_analyze_button.configure(state="disabled")
+        self.ai_analyze_top_button.configure(state="disabled")
+        self.ai_status_var.set("Requesting AI analysis of the selected opportunity...")
+        self._ai_result_queue: queue.Queue = queue.Queue()
+        preset_id = self.selected_preset_id()
+
+        def worker() -> None:
+            try:
+                view = analyze_record_headless(record, preset_id, evidence, package_root=ROOT_DIR)
+                self._ai_result_queue.put(("ok", view))
+            except Exception as exc:  # noqa: BLE001
+                self._ai_result_queue.put(("error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(200, self._poll_ai_queue)
+
+    def _poll_ai_queue(self) -> None:
+        try:
+            kind, payload = self._ai_result_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(200, self._poll_ai_queue)
+            return
+        self._ai_running = False
+        self.ai_analyze_button.configure(
+            state="normal" if self._selected_opportunity_rank() is not None else "disabled"
+        )
+        self.ai_analyze_top_button.configure(
+            state="normal" if getattr(self, "_ranked_opportunities", []) else "disabled"
+        )
+        if kind == "error":
+            self.ai_status_var.set(f"AI analysis error: {payload}")
+            self.messagebox.showerror("AI Analysis", f"AI analysis error:\n{payload}")
+            return
+        self.ai_status_var.set(format_ai_status_line(payload))
+        self.messagebox.showinfo("AI Analysis", format_ai_view_for_dialog(payload))
 
     def _on_self_test_clicked(self) -> None:
         if self._self_test_running or (self.worker is not None and self.worker.is_running()):

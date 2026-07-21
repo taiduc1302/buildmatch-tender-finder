@@ -2,3 +2,8 @@ openpyxl>=3.1
 beautifulsoup4>=4.12
 playwright>=1.40
 regex>=2024.11.6
+# BuildMatch Tender Finder AI Opportunity Copilot (Build Week): OpenAI Responses
+# API client for tenderfinder_ai_analysis.py. Only imported when a live analysis
+# is requested (OPENAI_API_KEY set); the mocked test suite and all deterministic
+# features work without it, but a normal install should still provide it.
+openai>=1.50

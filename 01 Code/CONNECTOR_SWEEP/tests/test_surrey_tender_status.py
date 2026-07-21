@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import sys
 from pathlib import Path
 
@@ -61,8 +62,16 @@ def test_trench_shield_open_preferred_quotation_date() -> None:
 
 
 def test_future_date_without_explicit_status_is_not_closed() -> None:
-    status, closing = infer_status("Closed tenders archive Closing Date July 9, 2026 watermain sanitary sewer")
-    assert closing == "2026-07-09"
+    # Use a genuinely future closing date computed at run time so the test
+    # keeps asserting the intended behaviour (a future date with only the
+    # boilerplate "Closed tenders archive" nav text must not be treated as a
+    # closed tender) instead of decaying into a stale hardcoded date.
+    future = dt.date.today() + dt.timedelta(days=120)
+    future_human = f"{future.strftime('%B')} {future.day}, {future.year}"
+    status, closing = infer_status(
+        f"Closed tenders archive Closing Date {future_human} watermain sanitary sewer"
+    )
+    assert closing == future.isoformat()
     assert apply_status_date_fallback(status, closing) == "open_or_needs_review"
 
 

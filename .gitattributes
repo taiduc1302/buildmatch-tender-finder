@@ -8,3 +8,7 @@
 # also keeps clean-release ZIP hashes independent of core.autocrlf.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Synthetic email-alert test fixtures are MIME messages; keep their exact bytes
+# so the offline parser sees identical content in every checkout.
+*.eml -text

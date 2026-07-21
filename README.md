@@ -1,16 +1,97 @@
 # Tender Finder — Internal Weekly Beta
 
+**Problem:** construction estimators spend hours manually checking public
+tender portals and municipal development-application feeds, copy-pasting
+results into spreadsheets, and re-deciding by hand which opportunities fit
+their trade. **Intended users:** small-to-mid civil, residential, and general
+contractors who need a repeatable, truthful way to find and triage public
+opportunities without a manual CLI-and-copy-paste workflow.
+
 Tender Finder is a clickable Windows/Python application for collecting approved
 public tender and development-project signals, normalizing them, scoring their
 fit, and producing reviewable Excel workbooks. It is intended for an internal
 weekly operator workflow. It is not production-ready, a hosted service, or a
 self-contained executable.
 
+## AI tool and contributor disclosure
+
+This project was built with a mix of human direction and AI coding tools.
+Nothing here is hidden or attributed to the wrong tool; where a fact is not
+independently verifiable by the current session, it is marked as such rather
+than asserted.
+
+- **Human owner (founder):** product ownership, construction/estimating domain
+  knowledge, scope decisions, acceptance criteria, data and privacy calls,
+  review of all AI output, final architecture and submission decisions.
+- **Codex, with GPT-5.6 (founder-asserted; primary build session shared at
+  `https://chatgpt.com/share/e/6a5e47aa-2eac-83e8-8a55-41ba5b3a7694`):** the
+  original core scraper — connector sweep, engine orchestration, deterministic
+  keyword scoring, source registry, and the base Tkinter GUI shell — first
+  committed 2026-07-14, inside the OpenAI Build Week 2026 Submission Period
+  (opened 2026-07-13 09:00 PT). **The `/feedback` Codex Session ID required
+  for submission is PENDING FOUNDER CONFIRMATION** — it has not been
+  independently verified by any AI session and must be retrieved by the
+  founder from the Codex session itself before this project is submitted.
+- **Claude Code:** used afterward for independent code review, security and
+  privacy review, sanitization (including removing a real employer name that
+  had leaked into fixtures and screenshots), test-gap analysis, and targeted
+  implementation — the AI-copilot analysis feature described below, contractor
+  presets, the ranked-opportunity selection UI, the full-sweep refresh
+  service, associated tests, Windows-CI defect fixes, and this documentation.
+  This is disclosed as targeted implementation and review work, not claimed
+  as the project's core functionality.
+
+See `docs/buildweek/final/` for the detailed session-by-session evidence log
+behind these claims, and `docs/buildweek/final/CLAIMS_LEDGER.md` for a
+PASS/FAIL/UNKNOWN table (Codex-related rows are `UNKNOWN` pending the
+founder's Session ID confirmation above — not asserted as verified).
+
 The normal entry point is `Launch_TENDER_FINDER_GUI.bat`. Core orchestration is
 implemented separately from Tkinter in
 `01 Code/CONNECTOR_SWEEP/tenderfinder_engine.py`, so a future BuildMatch service
 can call the engine without automating the desktop GUI. That integration does
 not exist yet.
+
+## BuildMatch Tender Finder — AI Opportunity Copilot (Build Week)
+
+**Pre-existing before Build Week (2026-07-14 baseline):** the connector sweep,
+deterministic keyword scoring engine, source registry, Excel workbook output,
+and base Tkinter GUI — see the disclosure above for authorship.
+
+**Built during the Submission Period (2026-07-13 through the deadline):**
+everything below this line — the AI copilot, contractor presets, data-mode/
+provenance tracking, the full-sweep refresh service (replacing a previous
+bounded preview), the Ranked Opportunities selection UI, and the Public
+Snapshot demo.
+
+The Run tab adds a contractor-profile-driven copilot workflow:
+
+`Contractor profile → public opportunities → deterministic filtering & scoring →
+ranked results → OpenAI analysis of a selected opportunity → evidence-based
+recommendation → estimator review/export`
+
+- A **persistent data-mode banner** always states the origin and age of the
+  loaded data (synthetic / public snapshot / live / cached-live / mixed / unknown).
+- **Contractor profiles** — Civil Contractor, Multi-Family Residential Builder,
+  General Contractor — selectable in the GUI; the residential/general profiles do
+  not penalize interior/mechanical/electrical/HVAC/suite scope.
+- **Refresh Development Data** pulls approved public development-application
+  records without command-line work, scores them, promotes them as the active
+  dataset, and shows truthful current-run statistics. A failed refresh keeps the
+  last known-good data and labels it cached/stale.
+- **Analyze Selected Opportunity with AI** runs an OpenAI (Responses API) analysis
+  with strict structured output, shown separately from — and never overriding —
+  the deterministic fit score and routing bucket. Set `OPENAI_API_KEY` (and
+  optionally `OPENAI_MODEL`); without a key, deterministic features still work.
+- A stable, offline **Public Snapshot** demo (`demo_data/public_snapshot`) powers
+  the three-minute presentation.
+
+Details are in `docs/buildweek/` (architecture, live refresh & rollback, data
+modes & metrics, presets, OpenAI integration, test results, demo script, Windows
+acceptance, known limitations, change index). AI output is advisory and
+evidence-referenced; it does not determine eligibility or replace estimator
+judgment. There is no hosted SaaS, 24/7 harvesting, or native HeavyBid/Bluebeam
+integration.
 
 ## Requirements and first launch
 
@@ -193,6 +274,38 @@ Local equivalent:
 ```
 
 Or double-click `verify_package.bat`.
+
+For the complete developer suite, install the test-only requirements and run
+pytest from the connector directory:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r "01 Code\CONNECTOR_SWEEP\requirements-dev.txt"
+Push-Location "01 Code\CONNECTOR_SWEEP"
+..\..\.venv\Scripts\python.exe -m pytest tests\ -q
+Pop-Location
+```
+
+The live OpenAI smoke test is opt-in and is skipped by default. All other
+tests are offline and must not contact tender portals.
+
+## Offline Public Snapshot demo
+
+Promote the checked-in, sanitized snapshot without contacting a live source:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, r'01 Code\CONNECTOR_SWEEP'); import tenderfinder_snapshot as s; print(s.promote_snapshot(root='.'))"
+```
+
+Then launch `Launch_TENDER_FINDER_GUI.bat`, open **Ranked Opportunities**, and
+click **Load / Refresh Ranked List**. Select a row before using the optional AI
+action. Configure AI only in the current process environment:
+
+```powershell
+$env:OPENAI_API_KEY = "<your key>"
+$env:OPENAI_MODEL = "gpt-5.6"  # optional; this is the default
+```
+
+Never save the key in repository files, workbooks, manifests, or logs.
 
 ## Clean source release
 

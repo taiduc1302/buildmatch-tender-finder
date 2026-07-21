@@ -43,6 +43,17 @@ KEYWORDS_STATE_ROOT_ENV_VAR = "TENDER_FINDER_KEYWORDS_STATE_ROOT"
 VALIDATION_REPORT_FILENAME = "keywords_validation_last.txt"
 LKG_WORKBOOK_FILENAME = "keywords_last_known_good.xlsx"
 LKG_METADATA_FILENAME = "keywords_last_known_good.json"
+
+# Guards every "temporarily point CONFIG_ENV_VAR at a preset workbook, score,
+# then restore" block across the codebase (GUI ranked-opportunity scoring,
+# the refresh-service scorer). CONFIG_ENV_VAR is process-global os.environ
+# state; the GUI runs these operations on background threads, and without
+# this lock two concurrent scoring passes under different presets (e.g. a
+# "Refresh Development Data" run and a "Load / Refresh Ranked List" click
+# started moments apart) could race and score under the wrong preset.
+import threading as _threading
+
+KEYWORDS_ENV_OVERRIDE_LOCK = _threading.Lock()
 PROFILE_SHEET = "Company_Profile"
 KEYWORDS_SHEET = "Keywords"
 INSTRUCTIONS_SHEET = "Instructions"

@@ -73,6 +73,13 @@ SELF_TEST_SCRIPTS = (
     ("manual_outreach_persistence", "test_outreach_persistence.py"),
     ("review_workbook_discovery", "test_launcher_review_xlsx_consistency.py"),
     ("tender_signal_routing", "test_tender_signal_routing.py"),
+    ("buildweek_data_modes", "test_buildweek_data_modes.py"),
+    ("buildweek_presets", "test_buildweek_presets.py"),
+    ("buildweek_refresh_service", "test_buildweek_refresh_service.py"),
+    ("buildweek_ai_analysis", "test_buildweek_ai_analysis.py"),
+    ("buildweek_gui_helpers", "test_buildweek_gui_helpers.py"),
+    ("buildweek_snapshot", "test_buildweek_snapshot.py"),
+    ("buildweek_demo_metrics_truthful", "test_buildweek_demo_metrics_truthful.py"),
 )
 
 SELF_TEST_INTENTIONAL_EXCLUSIONS = (
@@ -1444,6 +1451,15 @@ def test_source_definition(
         result["operational_status"] = new_status
     result["probe_output"] = str(probe_root)
     return result
+
+
+# ``test_source_definition`` is a runtime source-connector entry point, not a
+# pytest test.  Its ``test_`` prefix (kept for backwards-compatible callers)
+# would otherwise be auto-collected by pytest wherever the symbol is imported
+# into a test module's namespace, producing a spurious "fixture 'source_id' not
+# found" collection error.  The marker below opts it out of collection without
+# changing the public name or signature.
+test_source_definition.__test__ = False
 
 
 def validate_runtime_configuration(*, root: Path | None = None) -> dict[str, Any]:

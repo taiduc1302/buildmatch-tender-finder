@@ -1,6 +1,7 @@
 # Test/dev-only dependencies (runtime deps are in requirements.txt).
 # Added during package sanitization: these were undeclared but required
 # by parts of the test suite.
+pytest>=8.0          # full repository test suite + Windows acceptance script
 pyyaml>=6.0          # tests/run_regression.py
 pandas>=2.0          # tests/test_search_api_errors.py (via link checker)
 requests>=2.31       # tests/test_search_api_errors.py

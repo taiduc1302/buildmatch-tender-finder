@@ -11,6 +11,8 @@ import json
 import os
 import re
 import sys
+import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,7 @@ from tenderfinder_package_paths import detect_package_root
 
 STATE_ROOT_ENV_VAR = "TENDER_FINDER_STATE_ROOT"
 RUN_MODE_ENV_VAR = "TENDER_FINDER_RUN_MODE"
+_ATOMIC_JSON_WRITE_LOCK = threading.Lock()
 
 
 class RuntimeStateError(RuntimeError):
@@ -126,16 +129,29 @@ def sha256_file(path: str | Path) -> str:
 def atomic_write_json(path: str | Path, payload: dict[str, Any]) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_suffix(target.suffix + ".tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, target)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+    with _ATOMIC_JSON_WRITE_LOCK:
+        temporary: Path | None = None
+        try:
+            # A unique same-directory temporary file keeps staging names from
+            # colliding. The process lock also avoids WinError 5 when two GUI
+            # worker threads replace the same target simultaneously.
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            # Closing before os.replace is required on Windows.
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
     return target
 
 
