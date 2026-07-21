@@ -462,12 +462,31 @@ def _read_dataset_records(path: Path) -> list[dict]:
     return []
 
 
+# Stage/status markers that mean an application is finished (dead or already
+# through the process), so it is not an opportunity a contractor can pursue.
+# Mirrors the exclusion list Surrey's own live-source filter uses in
+# config/sources.csv (test_query_where). Substring match, case-insensitive.
+TERMINAL_STAGE_MARKERS: tuple[str, ...] = (
+    "concluded", "closed", "cancelled", "canceled", "withdrawn", "refused",
+    "rejected", "expired", "final maintenance", "ok for occupancy",
+)
+
+
+def _is_terminal_stage(record: dict) -> bool:
+    """True when the record's stage/status text marks a finished application."""
+    blob = " ".join(
+        str(record.get(key, "")) for key in ("app_type_stage", "status")
+    ).casefold()
+    return any(marker in blob for marker in TERMINAL_STAGE_MARKERS)
+
+
 def ranked_opportunities(
     *,
     state_root: str | Path | None = None,
     preset_id: str = DEFAULT_PRESET_ID,
     package_root: Path = ROOT_DIR,
     limit: int = 500,
+    include_terminal_stages: bool = False,
 ) -> list[dict]:
     """Score every record of the active dataset under the given preset and
     return the full ranked list, sorted by fit score descending.
@@ -476,6 +495,11 @@ def ranked_opportunities(
     ``[]`` when there is no active dataset. This backs the GUI's ranked
     opportunity selection table — the user picks a specific row, rather than
     the tool silently picking one for them.
+
+    By default, records whose stage/status marks the application as finished
+    (Concluded, Closed, Cancelled, Withdrawn, ...) are excluded — they are not
+    opportunities anyone can pursue. Pass ``include_terminal_stages=True`` for
+    the unfiltered list.
     """
     provenance = data_modes.load_active_dataset(state_root=state_root, package_root=package_root)
     if provenance is None or not provenance.path:
@@ -503,13 +527,19 @@ def ranked_opportunities(
             resolve_preset_keywords_path(preset_id, root=package_root)
         )
         try:
+            # Clear once so the preset config pointed at by the env var above is
+            # loaded fresh; inside the loop the cached config is reused (the
+            # lock prevents any concurrent cache mutation). Clearing per record
+            # forced a full keyword-workbook reload for every row.
+            _clear()
             scored: list[dict] = []
             for record in records:
+                if not include_terminal_stages and _is_terminal_stage(record):
+                    continue
                 text = " ".join(
                     str(record.get(key, ""))
                     for key in ("scope_summary", "app_type_stage", "address", "title", "tender_title")
                 )
-                _clear()
                 breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
                 fit = breakdown["fit_score"]
                 bucket = (
@@ -1242,9 +1272,17 @@ class TenderFinderLauncherApp:
             controls, text="Load / Refresh Ranked List", command=self._on_load_opportunities_clicked
         )
         self.load_opportunities_button.grid(row=0, column=0, sticky="w")
+        self.show_finished_var = tk.BooleanVar(value=False)
+        self.show_finished_check = ttk.Checkbutton(
+            controls,
+            text="Include finished applications (Concluded / Closed / Cancelled ...)",
+            variable=self.show_finished_var,
+            command=self._on_toggle_show_finished,
+        )
+        self.show_finished_check.grid(row=0, column=1, sticky="w", padx=(10, 0))
         self.opportunities_count_var = tk.StringVar(value="No ranked opportunities loaded yet.")
         ttk.Label(controls, textvariable=self.opportunities_count_var, font=(UI_FONT, 9)).grid(
-            row=0, column=1, sticky="w", padx=(10, 0)
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
 
         table_frame = ttk.LabelFrame(self.opportunities_tab, text="Select an opportunity")
@@ -2159,18 +2197,33 @@ class TenderFinderLauncherApp:
 
     # --- Opportunities tab: ranked list, selection, AI on the selected row --- #
 
+    def _on_toggle_show_finished(self) -> None:
+        """Re-load the ranked list when the finished-applications filter is
+        toggled, so the table always reflects the checkbox state."""
+        if getattr(self, "_opportunities_loading", False):
+            return
+        self._on_load_opportunities_clicked()
+
     def _on_load_opportunities_clicked(self) -> None:
         if getattr(self, "_opportunities_loading", False):
             return
         self._opportunities_loading = True
         self.load_opportunities_button.configure(state="disabled")
         self.opportunities_count_var.set("Loading ranked opportunities...")
+        # Clear stale rows immediately: showing the previous load's rows under
+        # a "Loading..." banner reads as the new filter state not working.
+        for row_id in self.opportunities_tree.get_children():
+            self.opportunities_tree.delete(row_id)
         self._opportunities_queue: queue.Queue = queue.Queue()
         preset_id = self.selected_preset_id()
+        include_finished = bool(self.show_finished_var.get())
 
         def worker() -> None:
             try:
-                ranked = ranked_opportunities(preset_id=preset_id, package_root=ROOT_DIR)
+                ranked = ranked_opportunities(
+                    preset_id=preset_id, package_root=ROOT_DIR,
+                    include_terminal_stages=include_finished,
+                )
                 self._opportunities_queue.put(("ok", ranked))
             except Exception as exc:  # noqa: BLE001
                 self._opportunities_queue.put(("error", str(exc)))
@@ -2197,8 +2250,13 @@ class TenderFinderLauncherApp:
                 "", "end", iid=str(item["rank"]), values=opportunity_row_values(item)
             )
         if self._ranked_opportunities:
+            filter_note = (
+                "finished applications included"
+                if self.show_finished_var.get()
+                else "finished applications (Concluded/Closed/Cancelled ...) filtered out"
+            )
             self.opportunities_count_var.set(
-                f"{len(self._ranked_opportunities)} ranked opportunities loaded. "
+                f"{len(self._ranked_opportunities)} ranked opportunities loaded ({filter_note}). "
                 f"Select one, then click 'Analyze Selected Opportunity with AI'."
             )
             self.ai_analyze_top_button.configure(state="normal")
@@ -2260,13 +2318,50 @@ class TenderFinderLauncherApp:
 
     def _on_ai_analyze_top_clicked(self) -> None:
         """Explicit, separately-labelled convenience shortcut that analyzes the
-        top-ranked opportunity without requiring a manual selection."""
+        top-ranked opportunity without requiring a manual selection.
+
+        The top-ranked lookup reads and scores the entire active dataset, so it
+        must run off the Tk main thread — doing it inline froze the window
+        ("Not Responding") for the whole scoring pass."""
         if getattr(self, "_ai_running", False):
             return
-        record, evidence = top_ranked_opportunity(
-            preset_id=self.selected_preset_id(), package_root=ROOT_DIR
-        )
+        if getattr(self, "_ai_top_pick_running", False):
+            return
+        self._ai_top_pick_running = True
+        self.ai_analyze_top_button.configure(state="disabled")
+        self.ai_status_var.set("Scoring the active dataset to find the top-ranked opportunity...")
+        self._ai_top_pick_queue: queue.Queue = queue.Queue()
+        preset_id = self.selected_preset_id()
+
+        def worker() -> None:
+            try:
+                record, evidence = top_ranked_opportunity(
+                    preset_id=preset_id, package_root=ROOT_DIR
+                )
+                self._ai_top_pick_queue.put(("ok", (record, evidence)))
+            except Exception as exc:  # noqa: BLE001 - surface any failure to the user
+                self._ai_top_pick_queue.put(("error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(200, self._poll_ai_top_pick_queue)
+
+    def _poll_ai_top_pick_queue(self) -> None:
+        try:
+            kind, payload = self._ai_top_pick_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(200, self._poll_ai_top_pick_queue)
+            return
+        self._ai_top_pick_running = False
+        self.ai_analyze_top_button.configure(state="normal")
+        if kind == "error":
+            self.ai_status_var.set(f"Top-ranked lookup failed: {payload}")
+            self.messagebox.showerror(
+                "AI Analysis", f"Could not determine the top-ranked opportunity:\n{payload}"
+            )
+            return
+        record, evidence = payload
         if record is None:
+            self.ai_status_var.set("")
             self.messagebox.showinfo(
                 "AI Analysis",
                 "No ranked opportunity is available yet. Run 'Refresh Development "

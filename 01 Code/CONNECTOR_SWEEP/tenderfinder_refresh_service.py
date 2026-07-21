@@ -326,6 +326,11 @@ def default_scorer(
             resolve_preset_keywords_path(preset_id, root=package_root)
         )
         try:
+            # Clear once so the preset config pointed at by the env var above is
+            # loaded fresh; inside the loop the cached config is reused (the
+            # lock prevents any concurrent cache mutation). Clearing per record
+            # forced a full keyword-workbook reload for every row.
+            _clear()
             scored_rows: list[dict[str, Any]] = []
             bid_later = watch = skip = 0
             for record in records:
@@ -333,7 +338,6 @@ def default_scorer(
                     str(record.get(key, ""))
                     for key in ("scope_summary", "app_type_stage", "address")
                 )
-                _clear()
                 breakdown = _guards.score_civil_fit_breakdown(text, str(record.get("municipality", "")))
                 fit = breakdown["fit_score"]
                 if fit >= _BID_LATER_MIN_FIT:
