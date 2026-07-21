@@ -97,10 +97,33 @@ def test_top_ranked_opportunity_none_when_no_dataset() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_ranked_opportunities_returns_full_sorted_list() -> None:
+def test_ranked_opportunities_default_excludes_terminal_stages() -> None:
+    """By default (include_terminal_stages=False), records whose application
+    stage is finished (Concluded/Closed/Cancelled/...) are excluded - they
+    are not opportunities anyone can still pursue."""
     with tempfile.TemporaryDirectory() as tmp:
         snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
         ranked = g.ranked_opportunities(state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT)
+        records, _manifest = snap.load_snapshot(REPO_ROOT)
+    terminal_count = sum(1 for r in records if g._is_terminal_stage(r))
+    assert terminal_count > 0  # the fixture snapshot actually contains finished records
+    assert len(ranked) == len(records) - terminal_count
+    assert all(not g._is_terminal_stage(item["record"]) for item in ranked)
+    fits = [item["evidence"]["fit_score"] for item in ranked]
+    assert fits == sorted(fits, reverse=True)  # default sort: fit score descending
+    ranks = [item["rank"] for item in ranked]
+    assert ranks == list(range(1, len(ranked) + 1))
+
+
+def test_ranked_opportunities_include_terminal_stages_restores_full_list() -> None:
+    """The "Include finished applications" option (include_terminal_stages=True)
+    must restore the records excluded by the default filter."""
+    with tempfile.TemporaryDirectory() as tmp:
+        snap.promote_snapshot(state_root=tmp, root=REPO_ROOT)
+        ranked = g.ranked_opportunities(
+            state_root=tmp, preset_id="civil_contractor", package_root=REPO_ROOT,
+            include_terminal_stages=True,
+        )
         records, _manifest = snap.load_snapshot(REPO_ROOT)
     assert len(ranked) == len(records)  # the full snapshot, not a truncated top-N preview
     fits = [item["evidence"]["fit_score"] for item in ranked]

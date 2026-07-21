@@ -79,6 +79,7 @@ SELF_TEST_SCRIPTS = (
     ("buildweek_ai_analysis", "test_buildweek_ai_analysis.py"),
     ("buildweek_gui_helpers", "test_buildweek_gui_helpers.py"),
     ("buildweek_snapshot", "test_buildweek_snapshot.py"),
+    ("buildweek_demo_metrics_truthful", "test_buildweek_demo_metrics_truthful.py"),
 )
 
 SELF_TEST_INTENTIONAL_EXCLUSIONS = (

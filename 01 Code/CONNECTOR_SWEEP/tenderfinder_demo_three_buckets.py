@@ -742,6 +742,7 @@ class DemoData:
     keyword_rescore_events: list[dict[str, Any]] = field(default_factory=list)
     keyword_below_gate: list[dict[str, Any]] = field(default_factory=list)
     read_seconds: float = 0.0
+    no_fetch: bool = False
 
 
 class LinkExtractor(HTMLParser):
@@ -1361,13 +1362,16 @@ def source_tier_for(source_id: str) -> str:
     return "TIER_3"
 
 
-def read_track_a(review_xlsx: Path, *, allow_network_enrichment: bool = False) -> DemoData:
+def read_track_a(
+    review_xlsx: Path, *, allow_network_enrichment: bool = False, no_fetch: bool = False,
+) -> DemoData:
     start = time.perf_counter()
     wb = openpyxl.load_workbook(review_xlsx, read_only=True, data_only=True)
     ws = wb.active
     rows = ws.iter_rows(values_only=True)
     headers = [str(h or "") for h in next(rows)]
     data = DemoData()
+    data.no_fetch = no_fetch
     enrichments = load_address_enrichment(allow_network=allow_network_enrichment)
 
     for values in rows:
@@ -1422,21 +1426,31 @@ def read_track_a(review_xlsx: Path, *, allow_network_enrichment: bool = False) -
                 summary_rows = list(csv.DictReader(f))
             pulled = sum(coerce_int(r.get("records_pulled")) for r in summary_rows)
             normalized = sum(coerce_int(r.get("records_normalized")) for r in summary_rows)
-            if pulled:
-                data.records_pulled = pulled
-            if normalized:
-                data.records_normalized = normalized
             if summary_rows:
+                # A source summary from the current run is the ground truth for
+                # this run, including a truthful zero (e.g. --no-fetch) - never
+                # silently keep the DemoData dataclass's historical BASELINE
+                # default, which would misrepresent an offline run as having
+                # pulled live records.
+                data.records_pulled = pulled
+                data.records_normalized = normalized
                 data.coded_sources = len(summary_rows)
             live = {
                 r.get("source_id")
                 for r in summary_rows
                 if coerce_int(r.get("records_pulled")) > 0
             }
-            if live:
+            if summary_rows:
                 data.live_sources = len(live)
         except Exception:
             pass
+
+    if no_fetch:
+        # --no-fetch means this run never contacted a live source - a
+        # historical BASELINE default or a stale source-summary total must
+        # never be reported as records fetched live in this run.
+        data.records_pulled = 0
+        data.live_sources = 0
 
     data.future.sort(key=lambda x: (-x["fit_score"], str(x["municipality"]), str(x["address"])))
     data.watch.sort(key=lambda x: (-x["fit_score"], str(x["municipality"]), str(x["address"])))
@@ -4061,9 +4075,18 @@ def build_workbook(out_path: Path, data: DemoData, tenders: list[TenderCandidate
         ["BID LATER - clean future-project leads", len(data.future), "Development applications and future civil projects to track"],
         ["Analyzed and set aside", len(data.analyzed), "Collected, scored, filtered, and retained for future reference"],
         ["Watchlist monitor", len(data.watch), "Rows needing manual review or future workflow"],
-        ["Records pulled live", data.records_pulled, "Current full sweep source-summary total when available"],
-        ["Records normalized", data.records_normalized, "Post-dedupe normalized rows"],
-        ["Sources with live connectors", data.live_sources, "Sources returning current rows in the full sweep"],
+        [
+            "Records pulled live",
+            data.records_pulled,
+            "SKIPPED_NO_FETCH - this run never contacted a live source" if data.no_fetch
+            else "Current full sweep source-summary total when available",
+        ],
+        ["Records normalized", data.records_normalized, "Post-dedupe normalized rows (input records loaded, not fetched live)"],
+        [
+            "Sources with live connectors",
+            data.live_sources,
+            "SKIPPED_NO_FETCH" if data.no_fetch else "Sources returning current rows in the full sweep",
+        ],
         ["Municipalities covered", len(data.municipalities), ", ".join(data.municipalities[:12])],
         ["Priority review queue", data.fit_ge_60, "Future project rows with fit_score >= 60"],
         ["Top tier", data.fit_ge_70, "Future project rows with fit_score >= 70"],
@@ -4189,8 +4212,12 @@ def build_workbook(out_path: Path, data: DemoData, tenders: list[TenderCandidate
 
     ws = wb.create_sheet("Acquisition_Funnel_And_Speed")
     funnel = [
-        ["Records pulled live (current full sweep)", data.records_pulled],
-        ["Records normalized", data.records_normalized],
+        [
+            "Records pulled live (current full sweep)" if not data.no_fetch
+            else "Records pulled live (SKIPPED_NO_FETCH)",
+            data.records_pulled,
+        ],
+        ["Records normalized (input records loaded)", data.records_normalized],
         ["BID NOW - tender candidates", len(bid_now_tenders)],
         ["BID NOW - civil relevant", sum(1 for t in bid_now_tenders if t.civil_relevant)],
         ["BID NOW - open civil", open_civil],
@@ -4623,12 +4650,22 @@ def write_talktrack(path: Path, data: DemoData, tenders: list[TenderCandidate], 
             "public access, and effort (backlog data files ship in the data/ folder)."
         )
 
+    opening_pull_line = (
+        f"This run loaded {data.records_normalized:,} input records (live fetch SKIPPED_NO_FETCH: "
+        f"0 records pulled live, 0 live working sources) across {len(data.municipalities)} municipalities "
+        f"in {total_seconds:.2f} seconds, with {len(data.future):,} clean future-project leads ready for review."
+        if data.no_fetch else
+        f"This run pulled {data.records_pulled:,} records from {data.live_sources} live working sources "
+        f"across {len(data.municipalities)} municipalities in {total_seconds:.2f} seconds, with "
+        f"{len(data.future):,} clean future-project leads ready for review."
+    )
+
     text = f"""# TENDER_FINDER Demo Talk Track
 
 ## OPENING
 
 1. TENDER_FINDER is a civil opportunity intelligence pipeline: it pulls municipal signals, scores them for civil/earthworks fit, and routes them into BID NOW, BID LATER, or ANALYZED AND SET ASIDE.
-2. This run pulled {data.records_pulled:,} records from {data.live_sources} live working sources across {len(data.municipalities)} municipalities in {total_seconds:.2f} seconds, with {len(data.future):,} clean future-project leads ready for review.
+2. {opening_pull_line}
 
 ## BID NOW
 
@@ -4840,8 +4877,8 @@ def write_build_report(path: Path, data: DemoData, tenders: list[TenderCandidate
 
 ## Funnel And Timings
 
-- Records pulled live: {data.records_pulled:,}
-- Records normalized: {data.records_normalized:,}
+- Records pulled live: {data.records_pulled:,}{" (SKIPPED_NO_FETCH - no live source was contacted this run)" if data.no_fetch else ""}
+- Records normalized (input records loaded): {data.records_normalized:,}
 - BID NOW tender candidates: {len(bid_now_tenders):,}
 - BID NOW civil relevant: {len(civil):,}
 - BID NOW open civil: {len(open_civil):,}
@@ -4963,7 +5000,7 @@ TENDER_FINDER DEMO COMPLETE - where to look:
 6. New_This_Run               -> {data.new_since_last_run:,} leads not seen in prior demo_history workbook
 7. Outreach_Tracker           -> {data.outreach_rollup.get('tracked', 0):,} action rows; manual statuses merge forward
 {roadmap_line}
-Build time: {total_seconds:.2f}s | Track B: {fetch_seconds:.2f}s | Records pulled: {data.records_pulled:,} | BC Bid open civil: {bc_bid_open}
+Build time: {total_seconds:.2f}s | Track B: {fetch_seconds:.2f}s | Records pulled: {data.records_pulled:,}{" (SKIPPED_NO_FETCH)" if data.no_fetch else ""} | Records loaded: {data.records_normalized:,} | BC Bid open civil: {bc_bid_open}
 Workbook: {workbook}
 BC Bid public URL: {BCBID_PUBLIC_URL}
 BC Bid status: {bc_bid_status_text}
@@ -7700,7 +7737,7 @@ def main() -> int:
     if archived_history:
         print(f"demo_history_archived_pre_5_11={[p.name for p in archived_history]}", flush=True)
     print("TENDER_FINDER_STAGE: Reading proven Track A development-project workbook", flush=True)
-    data = read_track_a(review_xlsx, allow_network_enrichment=not args.no_fetch)
+    data = read_track_a(review_xlsx, allow_network_enrichment=not args.no_fetch, no_fetch=args.no_fetch)
     print(f"KEYWORDS_RESCORE_ALWAYS: {RESCORE_ALWAYS_SUMMARY}", flush=True)
     print(
         f"KEYWORDS_RESCORE_ALWAYS: rescored={len(data.keyword_rescore_events)} below_gate={len(data.keyword_below_gate)}",
