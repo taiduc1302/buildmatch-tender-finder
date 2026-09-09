@@ -1,5 +1,5 @@
 # Runtime and repository test dependencies discovered from Python imports.
-openpyxl>=3.1
+openpyxl>=3.1.5
 beautifulsoup4>=4.12
 playwright>=1.40
 pandas>=2.0
