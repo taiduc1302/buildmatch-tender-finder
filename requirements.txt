@@ -1,7 +1,7 @@
 # Runtime and repository test dependencies discovered from Python imports.
 openpyxl>=3.1.5
 beautifulsoup4>=4.12
-playwright>=1.40
+playwright>=1.62.0
 pandas>=2.0
 pdfplumber>=0.11
 reportlab>=4.0
