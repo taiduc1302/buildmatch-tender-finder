@@ -6,7 +6,7 @@ pandas>=2.0
 pdfplumber>=0.11.10
 reportlab>=4.0
 requests>=2.34.2
-urllib3>=2.0
+urllib3>=2.7.0
 pyyaml>=6.0.3
 regex>=2026.9.3
 # BuildMatch Tender Finder AI Opportunity Copilot (Build Week): OpenAI Responses
