@@ -13,4 +13,4 @@ regex>=2026.9.10
 # API client for tenderfinder_ai_analysis.py. Only imported when a live analysis
 # is requested (OPENAI_API_KEY set); the mocked test suite and all deterministic
 # features work without it, but a normal install should still provide it.
-openai>=1.50
+openai>=3.14.1
