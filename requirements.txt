@@ -10,7 +10,7 @@ urllib3>=2.7.0
 pyyaml>=6.0.3
 regex>=2026.9.10
 # BuildMatch Tender Finder AI Opportunity Copilot (Build Week): OpenAI Responses
-# API client for tenderfinder_ai_analysis.py. Only imported when a live analysis
-# is requested (OPENAI_API_KEY set); the mocked test suite and all deterministic
-# features work without it, but a normal install should still provide it.
-openai>=1.50
+# API client for tenderfinder_ai_analysis.py. Responses API support was added in
+# openai-python 1.66.0; the mocked test suite and deterministic features work
+# without a live API key, but a normal install should provide this SDK surface.
+openai>=1.66.0
