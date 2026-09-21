@@ -13,4 +13,4 @@ regex>=2026.9.10
 # API client for tenderfinder_ai_analysis.py. Responses API support was added in
 # openai-python 1.66.0; the mocked test suite and deterministic features work
 # without a live API key, but a normal install should provide this SDK surface.
-openai>=1.66.0
+openai>=2.54.0
