@@ -48,6 +48,10 @@ jobs:
           $outputRoot = Join-Path $env:RUNNER_TEMP "tenderfinder-offline-ci"
           python -u "01 Code/CONNECTOR_SWEEP/tenderfinder_self_test.py" --root $env:GITHUB_WORKSPACE --output-root $outputRoot
 
+      - name: Verify resolved OpenAI SDK surface
+        shell: pwsh
+        run: python scripts/openai_sdk_compat_check.py
+
       - name: Verify minimum OpenAI SDK surface
         shell: pwsh
         run: |
